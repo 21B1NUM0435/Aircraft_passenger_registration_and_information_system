@@ -1,9 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using FlightManagementSystem.Core.Models;
+﻿using FlightManagementSystem.Core.Models;
 using Microsoft.EntityFrameworkCore;
 
 namespace FlightManagementSystem.Infrastructure.Data

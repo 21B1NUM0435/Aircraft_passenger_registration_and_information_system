@@ -14,6 +14,10 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
                         "Data Source=flightmanagement.db";
 builder.Configuration["ConnectionStrings:DefaultConnection"] = connectionString;
 
+// Add DbContext
+builder.Services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseSqlite(connectionString));
+
 // Add Infrastructure services
 builder.Services.AddInfrastructure(builder.Configuration);
 
@@ -21,6 +25,7 @@ builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 
 // Add CORS
 builder.Services.AddCors(options =>
@@ -57,7 +62,7 @@ if (app.Environment.IsDevelopment())
 }
 else
 {
-    app.UseExceptionHandler("/Home/Error");
+    app.UseExceptionHandler("/Error");
     app.UseHsts();
 }
 
@@ -70,6 +75,8 @@ app.UseAuthorization();
 // Map controllers and SignalR endpoints
 app.MapControllers();
 app.UseSignalREndpoints();
+app.MapRazorComponents<FlightManagementSystem.Web.Components.App>()
+    .AddInteractiveServerRenderMode();
 
 // Initialize the database
 await DatabaseInitializer.InitializeDatabaseAsync(app.Services);
