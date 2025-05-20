@@ -1,0 +1,212 @@
+﻿@page "/checkin-monitor/{FlightNumber}"
+@inject NavigationManager NavigationManager
+@inject IJSRuntime JSRuntime
+@implements IAsyncDisposable
+@using Microsoft.JSInterop
+@using FlightManagementSystem.Web.Models.Api
+@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.AspNetCore.SignalR.Client
+@using System.Text.Json
+@using System.Text.Json.Serialization
+
+<PageTitle>Check-In Monitor - Flight @FlightNumber</PageTitle>
+
+<div class="monitor-container">
+    <div class="header">
+        <h1>Check-In Status: Flight @FlightNumber</h1>
+        <div class="flight-status">Status: @(flight?.Status ?? "Loading...")</div>
+    </div>
+    
+    <div class="stats-container">
+        <div class="stat-box">
+            <div class="stat-value">@checkedInCount</div>
+            <div class="stat-label">Checked In</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-value">@bookingsCount</div>
+            <div class="stat-label">Total Bookings</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-value">@(bookingsCount > 0 ? $"{(checkedInCount * 100 / bookingsCount):F1}%" : "0%")</div>
+            <div class="stat-label">Check-In Rate</div>
+        </div>
+    </div>
+    
+    <div class="recent-activity">
+        <h2>Recent Check-Ins</h2>
+        <div class="activity-list">
+            @foreach (var activity in recentCheckIns)
+            {
+                <div class="activity-item">
+                    <div class="passenger-name">@activity.PassengerName</div>
+                    <div class="timestamp">@activity.Timestamp.ToLocalTime().ToString("HH:mm:ss")</div>
+                </div>
+            }
+            @if (recentCheckIns.Count == 0)
+            {
+                <div class="no-activity">No recent check-ins</div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public string FlightNumber { get; set; } = string.Empty;
+    
+    private HubConnection? hubConnection;
+    private FlightDetailDto? flight;
+    private int checkedInCount = 0;
+    private int bookingsCount = 0;
+    private List<CheckInActivity> recentCheckIns = new List<CheckInActivity>();
+    
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadFlightDetailsAsync();
+        await LoadPassengersAsync();
+        
+        // Set up SignalR connection
+        hubConnection = new HubConnectionBuilder()
+            .WithUrl(NavigationManager.ToAbsoluteUri("/flighthub"))
+            .WithAutomaticReconnect()
+            .Build();
+
+        hubConnection.On<FlightStatusChangedMessage>("FlightStatusChanged", async (message) =>
+        {
+            if (message.FlightNumber == FlightNumber)
+            {
+                await LoadFlightDetailsAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        });
+
+        hubConnection.On<PassengerCheckedInMessage>("PassengerCheckedIn", (message) =>
+        {
+            if (message.FlightNumber == FlightNumber)
+            {
+                checkedInCount++;
+                
+                // Add to recent check-ins and keep only the last 10
+                recentCheckIns.Insert(0, new CheckInActivity
+                {
+                    PassengerName = message.PassengerName,
+                    Timestamp = message.Timestamp
+                });
+                
+                if (recentCheckIns.Count > 10)
+                {
+                    recentCheckIns.RemoveAt(recentCheckIns.Count - 1);
+                }
+                
+                InvokeAsync(StateHasChanged);
+            }
+        });
+
+        await hubConnection.StartAsync();
+        await hubConnection.SendAsync("SubscribeToFlightUpdates", FlightNumber);
+    }
+
+    private async Task LoadFlightDetailsAsync()
+    {
+        try
+        {
+            var response = await new HttpClient().GetAsync($"{NavigationManager.BaseUri}api/flights/{FlightNumber}");
+            if (response.IsSuccessStatusCode)
+            {
+                var content = await response.Content.ReadAsStringAsync();
+                flight = JsonSerializer.Deserialize<FlightDetailDto>(content, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading flight details: {ex.Message}");
+        }
+    }
+
+    private async Task LoadPassengersAsync()
+    {
+        try
+        {
+            // Get checked-in passengers count
+            var passengersResponse = await new HttpClient().GetAsync($"{NavigationManager.BaseUri}api/flights/{FlightNumber}/passengers");
+            if (passengersResponse.IsSuccessStatusCode)
+            {
+                var content = await passengersResponse.Content.ReadAsStringAsync();
+                var passengers = JsonSerializer.Deserialize<List<PassengerDto>>(content, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                });
+                
+                checkedInCount = passengers?.Count ?? 0;
+            }
+            
+            // In a real application, you would have an API endpoint to get the total bookings count
+            // For now, we'll just simulate it
+            bookingsCount = 120; // Simulated total bookings
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading passengers: {ex.Message}");
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (hubConnection != null)
+        {
+            await hubConnection.DisposeAsync();
+        }
+    }
+
+    private class FlightDetailDto
+    {
+        public string FlightNumber { get; set; } = string.Empty;
+        public string Origin { get; set; } = string.Empty;
+        public string Destination { get; set; } = string.Empty;
+        public DateTime DepartureTime { get; set; }
+        public DateTime ArrivalTime { get; set; }
+        public string Status { get; set; } = string.Empty;
+        public string AircraftModel { get; set; } = string.Empty;
+        public string AircraftId { get; set; } = string.Empty;
+    }
+
+    private class PassengerDto
+    {
+        public string PassengerId { get; set; } = string.Empty;
+        public string FirstName { get; set; } = string.Empty;
+        public string LastName { get; set; } = string.Empty;
+    }
+
+    private class FlightStatusChangedMessage
+    {
+        [JsonPropertyName("flightNumber")]
+        public string FlightNumber { get; set; } = string.Empty;
+        
+        [JsonPropertyName("newStatus")]
+        public string NewStatus { get; set; } = string.Empty;
+        
+        [JsonPropertyName("timestamp")]
+        public DateTime Timestamp { get; set; }
+    }
+
+    private class PassengerCheckedInMessage
+    {
+        [JsonPropertyName("flightNumber")]
+        public string FlightNumber { get; set; } = string.Empty;
+        
+        [JsonPropertyName("passengerName")]
+        public string PassengerName { get; set; } = string.Empty;
+        
+        [JsonPropertyName("timestamp")]
+        public DateTime Timestamp { get; set; }
+    }
+
+    private class CheckInActivity
+    {
+        public string PassengerName { get; set; } = string.Empty;
+        public DateTime Timestamp { get; set; }
+    }
+}
