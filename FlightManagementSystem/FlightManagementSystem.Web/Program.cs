@@ -81,6 +81,7 @@ app.MapRazorComponents<FlightManagementSystem.Web.Components.App>()
 // Initialize the database
 await DatabaseInitializer.InitializeDatabaseAsync(app.Services);
 
+
 app.Run();
 
 // SocketServerHostedService.cs
