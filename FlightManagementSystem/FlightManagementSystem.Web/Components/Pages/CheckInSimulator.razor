@@ -1,0 +1,414 @@
+﻿@page "/simulator"
+@using FlightManagementSystem.Core.Models
+@using FlightManagementSystem.Web.Models.Api
+@using System.Net.Http.Json
+@using System.Text.Json
+@rendermode InteractiveServer
+@inject NavigationManager NavigationManager
+@inject IJSRuntime JSRuntime
+
+<PageTitle>Check-In Simulator</PageTitle>
+
+<div class="container">
+    <h1 class="mb-4">Check-In Simulator</h1>
+    
+    <div class="alert alert-info">
+        <strong>About this simulator:</strong> This page simulates multiple staff members trying to check-in passengers to the same seats simultaneously. Use this to test race conditions and the seat assignment locking mechanism.
+    </div>
+    
+    <div class="row">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h4>Simulation Settings</h4>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label for="flightSelect" class="form-label">Select Flight</label>
+                        <select id="flightSelect" class="form-select" @bind="selectedFlightNumber">
+                            <option value="">-- Select a flight --</option>
+                            @foreach (var flight in flights)
+                            {
+                                <option value="@flight.FlightNumber">@flight.FlightNumber - @flight.Origin to @flight.Destination</option>
+                            }
+                        </select>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="simConcurrency" class="form-label">Concurrent Check-ins:</label>
+                        <input type="range" class="form-range" id="simConcurrency" min="2" max="10" @bind="concurrentCheckins" />
+                        <div class="text-center">@concurrentCheckins users</div>
+                    </div>
+                    
+                    <button class="btn btn-primary" @onclick="LoadFlightDataAsync" disabled="@string.IsNullOrEmpty(selectedFlightNumber)">
+                        Load Flight Data
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h4>Available Seats</h4>
+                </div>
+                <div class="card-body">
+                    @if (isLoading)
+                    {
+                        <div class="d-flex justify-content-center">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                        </div>
+                    }
+                    else if (availableSeats.Count == 0 && !string.IsNullOrEmpty(selectedFlightNumber))
+                    {
+                        <div class="alert alert-warning">
+                            No available seats for this flight.
+                        </div>
+                    }
+                    else if (availableSeats.Count > 0)
+                    {
+                        <div class="row">
+                            @foreach (var seat in availableSeats.Take(10)) // Limit to 10 seats for the demo
+                            {
+                                <div class="col-md-6 mb-2">
+                                    <div class="card bg-light" @onclick="() => SelectSeat(seat)">
+                                        <div class="card-body">
+                                            <h5 class="card-title">@seat.SeatNumber</h5>
+                                            <p class="card-text">@seat.SeatClass - @seat.Price.ToString("C")</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    @if (selectedSeat != null)
+    {
+        <div class="row mt-4">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h4>Simulation</h4>
+                    </div>
+                    <div class="card-body">
+                        <p>Selected seat: <strong>@selectedSeat.SeatNumber (@selectedSeat.SeatClass)</strong></p>
+                        <p>This will simulate @concurrentCheckins staff members trying to check-in different passengers to the same seat simultaneously.</p>
+                        
+                        <button class="btn btn-danger mb-3" @onclick="RunSimulationAsync" disabled="@isRunningSimulation">
+                            @if (isRunningSimulation)
+                            {
+                                <span class="spinner-border spinner-border-sm mr-2" role="status" aria-hidden="true"></span>
+                                <span>Running...</span>
+                            }
+                            else
+                            {
+                                <span>Run Simulation</span>
+                            }
+                        </button>
+                        
+                        <div class="mt-3">
+                            <h5>Results:</h5>
+                            <div class="simulation-results">
+                                @foreach (var result in simulationResults)
+                                {
+                                    <div class="alert @(result.Success ? "alert-success" : "alert-danger")">
+                                        <strong>Staff #@result.StaffId:</strong> @result.Message
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private List<FlightDto> flights = new();
+    private List<SeatDto> availableSeats = new();
+    private string selectedFlightNumber = "";
+    private SeatDto? selectedSeat;
+    private int concurrentCheckins = 3;
+    private bool isLoading = false;
+    private bool isRunningSimulation = false;
+    private List<SimulationResult> simulationResults = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadFlightsAsync();
+    }
+
+    private async Task LoadFlightsAsync()
+    {
+        try
+        {
+            isLoading = true;
+            var response = await new HttpClient().GetAsync($"{NavigationManager.BaseUri}api/flights");
+            if (response.IsSuccessStatusCode)
+            {
+                flights = await response.Content.ReadFromJsonAsync<List<FlightDto>>() ?? new();
+            }
+        }
+        catch (Exception ex)
+        {
+            await JSRuntime.InvokeVoidAsync("console.error", "Error loading flights:", ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task LoadFlightDataAsync()
+    {
+        // Skip if no flight is selected
+        if (string.IsNullOrEmpty(selectedFlightNumber))
+            return;
+
+        try
+        {
+            isLoading = true;
+            availableSeats.Clear();
+            selectedSeat = null;
+            simulationResults.Clear();
+
+            // Request available seats for the selected flight
+            var client = new HttpClient();
+            var response = await client.GetAsync($"{NavigationManager.BaseUri}api/checkin/available-seats/{selectedFlightNumber}");
+
+            if (response.IsSuccessStatusCode)
+            {
+                // Parse the response JSON
+                var content = await response.Content.ReadAsStringAsync();
+                var options = new JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true
+                    };
+
+                availableSeats = JsonSerializer.Deserialize<List<SeatDto>>(content, options) ?? new List<SeatDto>();
+            }
+            else
+            {
+                // Handle error response
+                await JSRuntime.InvokeVoidAsync("alert", $"Error loading seats: {response.StatusCode}");
+            }
+        }
+        catch (Exception ex)
+        {
+            // Log error to browser console
+            await JSRuntime.InvokeVoidAsync("console.error", "Error loading seats:", ex.Message);
+        }
+        finally
+        {
+            // Always set isLoading back to false when done
+            isLoading = false;
+            StateHasChanged(); // Force UI update
+        }
+    }
+
+    private void SelectSeat(SeatDto seat)
+    {
+        selectedSeat = seat;
+        simulationResults.Clear();
+    }
+
+    private async Task RunSimulationAsync()
+    {
+        if (selectedSeat == null || isRunningSimulation)
+            return;
+            
+        try
+        {
+            isRunningSimulation = true;
+            simulationResults.Clear();
+            
+            // Create a list of fake passenger data for simulation
+            var passengerData = new List<(string PassportNumber, string Name)>
+            {
+                ("MN12345678", "Bat Bold"),
+                ("MN23456789", "Saran Tuya"),
+                ("MN34567890", "Ganbaa Delger"),
+                ("MN45678901", "Zolboo Bataa"),
+                ("MN56789012", "Bolormaa Dulam"),
+                ("MN67890123", "Enkhjargal Batsuren"),
+                ("MN78901234", "Bayarmaa Otgon"),
+                ("MN89012345", "Anujin Baatar"),
+                ("MN90123456", "Temuulen Orgil"),
+                ("MN01234567", "Oyunbileg Purev")
+            };
+
+            // Create a list of staff IDs for simulation
+            var staffData = Enumerable.Range(1, concurrentCheckins)
+                .Select(i => $"SIM{i:D3}")
+                .ToList();
+
+            // Create tasks for each simulated check-in
+            var tasks = new List<Task<SimulationResult>>();
+            
+            for (int i = 0; i < concurrentCheckins; i++)
+            {
+                var staffId = staffData[i];
+                var passenger = passengerData[i % passengerData.Count];
+                var counterId = $"SIM{i:D3}";
+                
+                tasks.Add(SimulateCheckInAsync(staffId, counterId, passenger.PassportNumber, passenger.Name));
+            }
+
+            // Run all tasks concurrently
+            await Task.Delay(500); // Small delay to ensure UI updates
+            var results = await Task.WhenAll(tasks);
+            
+            // Add results to the UI
+            foreach (var result in results)
+            {
+                simulationResults.Add(result);
+            }
+            
+            // Refresh the available seats after simulation
+            await LoadFlightDataAsync();
+        }
+        catch (Exception ex)
+        {
+            await JSRuntime.InvokeVoidAsync("console.error", "Simulation error:", ex.Message);
+            simulationResults.Add(new SimulationResult
+            {
+                StaffId = "System",
+                Success = false,
+                Message = $"Error running simulation: {ex.Message}"
+            });
+        }
+        finally
+        {
+            isRunningSimulation = false;
+        }
+    }
+
+    private async Task<SimulationResult> SimulateCheckInAsync(string staffId, string counterId, string passportNumber, string passengerName)
+    {
+        try
+        {
+            // Simulate finding passenger's booking
+            var bookingResponse = await new HttpClient().GetAsync(
+                $"{NavigationManager.BaseUri}api/checkin/search?passportNumber={passportNumber}&flightNumber={selectedFlightNumber}");
+            
+            if (!bookingResponse.IsSuccessStatusCode)
+            {
+                return new SimulationResult
+                {
+                    StaffId = staffId,
+                    Success = false,
+                    Message = $"Could not find booking for passenger {passengerName} with passport {passportNumber}"
+                };
+            }
+            
+            var booking = await bookingResponse.Content.ReadFromJsonAsync<BookingDto>();
+            if (booking == null)
+            {
+                return new SimulationResult
+                {
+                    StaffId = staffId,
+                    Success = false,
+                    Message = $"Invalid booking data for passenger {passengerName}"
+                };
+            }
+            
+            if (booking.CheckedIn)
+            {
+                return new SimulationResult
+                {
+                    StaffId = staffId,
+                    Success = false,
+                    Message = $"Passenger {passengerName} is already checked in"
+                };
+            }
+            
+            // Try to check in the passenger with the selected seat
+            var checkInRequest = new CheckInRequestDto
+            {
+                BookingReference = booking.BookingReference,
+                FlightNumber = selectedFlightNumber,
+                SeatId = selectedSeat!.SeatId,
+                StaffId = staffId,
+                CounterId = counterId,
+                PassengerName = passengerName
+            };
+            
+            var checkInContent = JsonContent.Create(checkInRequest);
+            var checkInResponse = await new HttpClient().PostAsync(
+                $"{NavigationManager.BaseUri}api/checkin/process", checkInContent);
+            
+            if (checkInResponse.IsSuccessStatusCode)
+            {
+                var result = await checkInResponse.Content.ReadFromJsonAsync<CheckInResponseDto>();
+                if (result?.Success == true)
+                {
+                    return new SimulationResult
+                    {
+                        StaffId = staffId,
+                        Success = true,
+                        Message = $"Successfully checked in {passengerName} to seat {selectedSeat!.SeatNumber}"
+                    };
+                }
+                else
+                {
+                    return new SimulationResult
+                    {
+                        StaffId = staffId,
+                        Success = false,
+                        Message = result?.Message ?? "Unknown error during check-in"
+                    };
+                }
+            }
+            else
+            {
+                var errorContent = await checkInResponse.Content.ReadAsStringAsync();
+                string errorMessage;
+                
+                try
+                {
+                    var errorResponse = JsonSerializer.Deserialize<ErrorResponse>(errorContent);
+                    errorMessage = errorResponse?.Error ?? "Unknown error";
+                }
+                catch
+                {
+                    errorMessage = errorContent;
+                }
+                
+                return new SimulationResult
+                {
+                    StaffId = staffId,
+                    Success = false,
+                    Message = $"Check-in failed: {errorMessage}"
+                };
+            }
+        }
+        catch (Exception ex)
+        {
+            return new SimulationResult
+            {
+                StaffId = staffId,
+                Success = false,
+                Message = $"Error: {ex.Message}"
+            };
+        }
+    }
+
+    private class SimulationResult
+    {
+        public string StaffId { get; set; } = string.Empty;
+        public bool Success { get; set; }
+        public string Message { get; set; } = string.Empty;
+    }
+    
+    private class ErrorResponse
+    {
+        public string Error { get; set; } = string.Empty;
+    }
+}
