@@ -74,6 +74,7 @@ app.UseSignalREndpoints();
 // Initialize the database
 await DatabaseInitializer.InitializeDatabaseAsync(app.Services);
 
+
 app.Run();
 
 // SocketServerHostedService.cs
