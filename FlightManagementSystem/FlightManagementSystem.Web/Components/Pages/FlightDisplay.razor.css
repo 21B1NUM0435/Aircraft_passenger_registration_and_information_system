@@ -1,0 +1,72 @@
+﻿.flight-display-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+h1 {
+    text-align: center;
+    color: #333;
+    margin-bottom: 30px;
+}
+
+.flight-info-header, .flight-info-body {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.flight-row {
+    display: flex;
+    border-bottom: 1px solid #ddd;
+}
+
+    .flight-row.header {
+        background-color: #3498db;
+        color: white;
+        font-weight: bold;
+        border-top-left-radius: 8px;
+        border-top-right-radius: 8px;
+    }
+
+.flight-cell {
+    flex: 1;
+    padding: 15px;
+    text-align: center;
+}
+
+.no-flights {
+    padding: 30px;
+    text-align: center;
+    font-style: italic;
+    color: #777;
+}
+
+/* Status colors */
+.status-checkingin {
+    background-color: #e9f7fe;
+}
+
+.status-boarding {
+    background-color: #fffde7;
+}
+
+.status-departed {
+    background-color: #e8f5e9;
+}
+
+.status-delayed {
+    background-color: #fff3e0;
+}
+
+.status-cancelled {
+    background-color: #ffebee;
+}
+
+/* Large screens like airport displays */
+@media (min-width: 1400px) {
+    .flight-display-container {
+        max-width: 1600px;
+        font-size: 1.2em;
+    }
+}
