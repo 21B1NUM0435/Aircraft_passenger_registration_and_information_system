@@ -249,7 +249,7 @@ namespace FlightManagementSystem.Infrastructure.Data
                 {
                     BookingReference = "BK002",
                     PassengerId = "P002",
-                    FlightNumber = "MR102",
+                    FlightNumber = "MR101",
                     BookingDate = DateTime.Now.AddDays(-3),
                     CheckInStatus = CheckInStatus.NotCheckedIn,
                     PaymentStatus = PaymentStatus.Completed,
