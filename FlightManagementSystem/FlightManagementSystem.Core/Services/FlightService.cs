@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using FlightManagementSystem.Core.Interfaces;
 using FlightManagementSystem.Core.Models;
+using Microsoft.Extensions.Logging;
 
 namespace FlightManagementSystem.Core.Services
 {
@@ -14,23 +15,20 @@ namespace FlightManagementSystem.Core.Services
         private readonly IBookingRepository _bookingRepository;
         private readonly IPassengerRepository _passengerRepository;
         private readonly IUnitOfWork _unitOfWork;
-        private readonly ISocketServer _socketServer;
-        private readonly IFlightHubService? _flightHubService;
+        private readonly ILogger<FlightService>? _logger;
 
         public FlightService(
             IFlightRepository flightRepository,
             IBookingRepository bookingRepository,
             IPassengerRepository passengerRepository,
             IUnitOfWork unitOfWork,
-            ISocketServer socketServer,
-            IFlightHubService? flightHubService = null)
+            ILogger<FlightService>? logger = null)
         {
             _flightRepository = flightRepository;
             _bookingRepository = bookingRepository;
             _passengerRepository = passengerRepository;
             _unitOfWork = unitOfWork;
-            _socketServer = socketServer;
-            _flightHubService = flightHubService;
+            _logger = logger;
         }
 
         public async Task<IEnumerable<Flight>> GetAllFlightsAsync()
@@ -47,31 +45,24 @@ namespace FlightManagementSystem.Core.Services
         {
             try
             {
+                _logger?.LogInformation("Updating flight {FlightNumber} status to {NewStatus}", flightNumber, newStatus);
+
                 // Update flight status in database
                 var result = await _flightRepository.UpdateFlightStatusAsync(flightNumber, newStatus);
 
                 if (result)
                 {
                     await _unitOfWork.SaveChangesAsync();
-
-                    // Broadcast to Windows applications via Socket Server
-                    await BroadcastFlightStatusToSocketClients(flightNumber, newStatus);
-
-                    // Broadcast to Web clients via SignalR Hub
-                    if (_flightHubService != null)
-                    {
-                        await _flightHubService.NotifyFlightStatusChanged(flightNumber, newStatus);
-                    }
-
+                    _logger?.LogInformation("Successfully updated flight {FlightNumber} status to {NewStatus}", flightNumber, newStatus);
                     return true;
                 }
 
+                _logger?.LogWarning("Failed to update flight {FlightNumber} status", flightNumber);
                 return false;
             }
             catch (Exception ex)
             {
-                // Log error but don't expose internal details
-                Console.WriteLine($"Error updating flight status: {ex.Message}");
+                _logger?.LogError(ex, "Error updating flight {FlightNumber} status to {NewStatus}", flightNumber, newStatus);
                 return false;
             }
         }
@@ -102,30 +93,6 @@ namespace FlightManagementSystem.Core.Services
                 DepartureTime = flight.DepartureTime,
                 AircraftCapacity = flight.Aircraft?.Capacity ?? 0
             };
-        }
-
-        private async Task BroadcastFlightStatusToSocketClients(string flightNumber, FlightStatus newStatus)
-        {
-            try
-            {
-                var message = System.Text.Json.JsonSerializer.Serialize(new
-                {
-                    type = "FlightStatusUpdate",
-                    data = new
-                    {
-                        flightNumber = flightNumber,
-                        newStatus = newStatus.ToString(),
-                        timestamp = DateTime.UtcNow
-                    }
-                });
-
-                _socketServer.BroadcastMessage(message);
-            }
-            catch (Exception ex)
-            {
-                // Log error but don't fail the operation
-                Console.WriteLine($"Error broadcasting flight status to socket clients: {ex.Message}");
-            }
         }
     }
 

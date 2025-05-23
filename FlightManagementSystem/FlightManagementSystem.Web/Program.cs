@@ -3,6 +3,7 @@ using FlightManagementSystem.Infrastructure;
 using FlightManagementSystem.Infrastructure.Data;
 using FlightManagementSystem.Infrastructure.SocketServer;
 using FlightManagementSystem.Web.Extensions;
+using FlightManagementSystem.Web.Hubs;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -56,6 +57,13 @@ builder.Services.AddSignalRServices();
 // Add hosted service to start Socket Server
 builder.Services.AddHostedService<SocketServerHostedService>();
 
+// Add logging
+builder.Services.AddLogging(builder =>
+{
+    builder.AddConsole();
+    builder.AddDebug();
+});
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline
@@ -85,7 +93,7 @@ app.UseAntiforgery();     // Add anti-forgery middleware after authorization
 app.MapControllers();
 
 // Map SignalR endpoints
-app.MapHub<FlightManagementSystem.Web.Hubs.FlightHub>("/flighthub");
+app.MapHub<FlightHub>("/flighthub");
 
 // Map Blazor components
 app.MapRazorComponents<FlightManagementSystem.Web.Components.App>()
@@ -95,13 +103,14 @@ app.MapRazorComponents<FlightManagementSystem.Web.Components.App>()
 try
 {
     await DatabaseInitializer.InitializeDatabaseAsync(app.Services);
+    app.Logger.LogInformation("Database initialized successfully");
 }
 catch (Exception ex)
 {
-    var logger = app.Services.GetRequiredService<ILogger<Program>>();
-    logger.LogError(ex, "An error occurred while initializing the database");
+    app.Logger.LogError(ex, "An error occurred while initializing the database");
 }
 
+app.Logger.LogInformation("Application starting...");
 app.Run();
 
 // SocketServerHostedService - Define in the same file to avoid namespace issues
@@ -119,12 +128,28 @@ public class SocketServerHostedService : IHostedService
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("Starting Socket Server");
-        await _socketServer.StartAsync(cancellationToken);
+        try
+        {
+            await _socketServer.StartAsync(cancellationToken);
+            _logger.LogInformation("Socket Server started successfully");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to start Socket Server");
+        }
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("Stopping Socket Server");
-        await _socketServer.StopAsync();
+        try
+        {
+            await _socketServer.StopAsync();
+            _logger.LogInformation("Socket Server stopped successfully");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to stop Socket Server");
+        }
     }
 }

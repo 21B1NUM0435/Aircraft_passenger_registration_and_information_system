@@ -1,4 +1,5 @@
-﻿using System.Net.Sockets;
+﻿using FlightManagementSystem.Core.Models;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 
@@ -177,28 +178,20 @@ namespace FlightManagementSystem.WinApp.Services
             {
                 try
                 {
+                    Console.WriteLine($"Processing message type: {message.Type}");
+
                     switch (message.Type)
                     {
                         case MessageType.SeatAssignment:
-                            if (message.Data is JsonElement seatElement)
-                            {
-                                var seatMsg = JsonSerializer.Deserialize<SeatReservationMessage>(seatElement.GetRawText());
-                                if (seatMsg != null && seatMsg.IsReserved)
-                                {
-                                    OnSeatReserved?.Invoke(seatMsg.SeatId, seatMsg.FlightNumber);
-                                }
-                            }
+                            ProcessSeatAssignmentMessage(message.Data);
                             break;
 
                         case MessageType.FlightStatusUpdate:
-                            if (message.Data is JsonElement flightElement)
-                            {
-                                var flightMsg = JsonSerializer.Deserialize<FlightStatusMessage>(flightElement.GetRawText());
-                                if (flightMsg != null)
-                                {
-                                    OnFlightStatusChanged?.Invoke(flightMsg.FlightNumber, flightMsg.NewStatus);
-                                }
-                            }
+                            ProcessFlightStatusMessage(message.Data);
+                            break;
+
+                        case MessageType.SeatLock:
+                            ProcessSeatLockMessage(message.Data);
                             break;
 
                         case MessageType.Ping:
@@ -216,8 +209,102 @@ namespace FlightManagementSystem.WinApp.Services
                 catch (Exception ex)
                 {
                     OnConnectionStatusChanged?.Invoke($"Message processing error: {ex.Message}");
+                    Console.WriteLine($"Error processing message: {ex}");
                 }
             });
+        }
+
+        private void ProcessSeatAssignmentMessage(object data)
+        {
+            try
+            {
+                string json;
+                if (data is JsonElement element)
+                {
+                    json = element.GetRawText();
+                }
+                else
+                {
+                    json = JsonSerializer.Serialize(data);
+                }
+
+                var seatMsg = JsonSerializer.Deserialize<SeatAssignmentMessage>(json, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                });
+
+                if (seatMsg != null && seatMsg.IsAssigned)
+                {
+                    Console.WriteLine($"Seat {seatMsg.SeatId} assigned on flight {seatMsg.FlightNumber}");
+                    OnSeatReserved?.Invoke(seatMsg.SeatId, seatMsg.FlightNumber);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error processing seat assignment: {ex.Message}");
+            }
+        }
+
+        private void ProcessFlightStatusMessage(object data)
+        {
+            try
+            {
+                string json;
+                if (data is JsonElement element)
+                {
+                    json = element.GetRawText();
+                }
+                else
+                {
+                    json = JsonSerializer.Serialize(data);
+                }
+
+                var flightMsg = JsonSerializer.Deserialize<FlightStatusMessage>(json, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                });
+
+                if (flightMsg != null)
+                {
+                    Console.WriteLine($"Flight {flightMsg.FlightNumber} status changed to {flightMsg.NewStatus}");
+                    OnFlightStatusChanged?.Invoke(flightMsg.FlightNumber, flightMsg.NewStatus);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error processing flight status: {ex.Message}");
+            }
+        }
+
+        private void ProcessSeatLockMessage(object data)
+        {
+            try
+            {
+                string json;
+                if (data is JsonElement element)
+                {
+                    json = element.GetRawText();
+                }
+                else
+                {
+                    json = JsonSerializer.Serialize(data);
+                }
+
+                var lockMsg = JsonSerializer.Deserialize<SeatLockMessage>(json, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                });
+
+                if (lockMsg != null)
+                {
+                    Console.WriteLine($"Seat {lockMsg.SeatId} lock status: {lockMsg.IsLocked}");
+                    // Handle seat lock/unlock if needed
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error processing seat lock: {ex.Message}");
+            }
         }
 
         public void Dispose()
@@ -229,7 +316,16 @@ namespace FlightManagementSystem.WinApp.Services
         }
     }
 
+
     // Message classes for socket communication
+
+    public class SeatLockMessage
+    {
+        public string SeatId { get; set; } = string.Empty;
+        public string FlightNumber { get; set; } = string.Empty;
+        public bool IsLocked { get; set; }
+        public DateTime Timestamp { get; set; }
+    }
     public class SocketMessage
     {
         public MessageType Type { get; set; }
@@ -258,6 +354,7 @@ namespace FlightManagementSystem.WinApp.Services
         FlightStatusUpdate,
         CheckInComplete,
         Error,
-        Ping
+        Ping,
+        SeatLock
     }
 }

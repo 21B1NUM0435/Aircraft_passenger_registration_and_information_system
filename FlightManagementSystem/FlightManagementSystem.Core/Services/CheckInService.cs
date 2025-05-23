@@ -108,7 +108,7 @@ namespace FlightManagementSystem.Core.Services
                 _seatProcessingTracker[seatId] = DateTime.UtcNow;
 
                 // Broadcast seat lock to other terminals immediately
-                await BroadcastSeatLockAsync(seatId, true);
+                BroadcastSeatLock(seatId, true);
 
                 // Get booking details
                 var booking = await _bookingRepository.GetByReferenceWithDetailsAsync(bookingReference);
@@ -178,7 +178,7 @@ namespace FlightManagementSystem.Core.Services
                     await _unitOfWork.SaveChangesAsync();
 
                     // Broadcast successful seat assignment to all terminals
-                    await BroadcastSeatAssignmentAsync(seatId, flight.FlightNumber, booking.Passenger.FirstName + " " + booking.Passenger.LastName);
+                    BroadcastSeatAssignment(seatId, flight.FlightNumber, booking.Passenger.FirstName + " " + booking.Passenger.LastName);
 
                     return (true, "Check-in successful", boardingPass);
                 }
@@ -197,14 +197,14 @@ namespace FlightManagementSystem.Core.Services
                 _seatProcessingTracker.TryRemove(seatId, out _);
 
                 // Broadcast seat unlock
-                await BroadcastSeatLockAsync(seatId, false);
+                BroadcastSeatLock(seatId, false);
 
                 // Release the semaphore
                 seatSemaphore.Release();
             }
         }
 
-        private async Task BroadcastSeatLockAsync(string seatId, bool isLocked)
+        private void BroadcastSeatLock(string seatId, bool isLocked)
         {
             try
             {
@@ -216,10 +216,12 @@ namespace FlightManagementSystem.Core.Services
                         seatId = seatId,
                         isLocked = isLocked,
                         timestamp = DateTime.UtcNow
-                    }
+                    },
+                    timestamp = DateTime.UtcNow
                 });
 
                 _socketServer.BroadcastMessage(message);
+                Console.WriteLine($"Broadcasted seat lock: {seatId} = {isLocked}");
             }
             catch (Exception ex)
             {
@@ -228,7 +230,7 @@ namespace FlightManagementSystem.Core.Services
             }
         }
 
-        private async Task BroadcastSeatAssignmentAsync(string seatId, string flightNumber, string passengerName)
+        private void BroadcastSeatAssignment(string seatId, string flightNumber, string passengerName)
         {
             try
             {
@@ -242,10 +244,12 @@ namespace FlightManagementSystem.Core.Services
                         passengerName = passengerName,
                         isAssigned = true,
                         timestamp = DateTime.UtcNow
-                    }
+                    },
+                    timestamp = DateTime.UtcNow
                 });
 
                 _socketServer.BroadcastMessage(message);
+                Console.WriteLine($"Broadcasted seat assignment: {seatId} on flight {flightNumber}");
             }
             catch (Exception ex)
             {
