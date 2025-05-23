@@ -11,17 +11,22 @@
 
 <PageTitle>Passenger Check-In</PageTitle>
 
-@if (isLoading)
+@if(isLoading)
 {
     <div class="spinner-overlay">
         <div class="spinner-container">
-            <div class="spinner-border text-primary" role="status">
-                <span class="visually-hidden">Loading...</span>
+            <div class="spinner-border text-primary" role="status">         
+                <span class="visually-hidden">
+                Loading...
+                </span>
+            </div>   
+            <div class="spinner-text">
+            Processing...
             </div>
-            <div class="spinner-text">Processing...</div>
         </div>
     </div>
 }
+
 
 <div class="container">
     <h1 class="mb-4">Passenger Check-In</h1>
@@ -51,7 +56,7 @@
                 <div class="card-body">
                     <div class="form-group mb-3">
                         <label for="flightSelect">Select Flight:</label>
-                        <select id="flightSelect" class="form-control" @bind="selectedFlightNumber" @bind:event="onchange" @onchange="OnFlightChanged">
+                        <select id="flightSelect" class="form-control" @bind="selectedFlightNumber" @bind:after="UpdateFlightInfoAsync">
                             <option value="">-- Select a flight --</option>
                             @foreach (var flight in flights)
                             {
@@ -60,28 +65,43 @@
                         </select>
                     </div>
 
+                    
                     @if (!string.IsNullOrEmpty(selectedFlightNumber))
                     {
                         <div class="d-flex justify-content-between align-items-center mb-3">
-                            <span class="badge bg-info text-dark p-2">Status: @currentFlightStatus</span>
+                            <span class="badge bg-info text-dark p-2">
+                            Status: @currentFlightStatus
+                            </span>
                             <div class="d-flex align-items-center">
-                                <select class="form-control me-2" @bind="newFlightStatus">
-                                    <option value="CheckingIn">Checking In</option>
-                                    <option value="Boarding">Boarding</option>
-                                    <option value="Departed">Departed</option>
-                                    <option value="Delayed">Delayed</option>
-                                    <option value="Cancelled">Cancelled</option>
-                                </select>
+                                <select class="form-control me-2" @bind="newFlightStatus">                            
+                                    <option value="CheckingIn">
+                                    Checking In
+                                    </option>                           
+                                    <option value="Boarding">
+                                    Boarding
+                                    </option>                              
+                                    <option value="Departed">
+                                    Departed
+                                    </option>                               
+                                    <option value="Delayed">
+                                    Delayed
+                                    </option>                  
+                                    <option value="Cancelled">
+                                    Cancelled
+                                    </option>                     
+                                </select>                       
                                 <button class="btn btn-warning" @onclick="UpdateFlightStatusAsync" disabled="@(!isFlightStatusUpdatable)">
-                                    Update Status
-                                </button>
-                            </div>
-                        </div>
+                                Update Status
+                                </button>                   
+                            </div>                  
+                        </div>               
                     }
+
                 </div>
             </div>
         </div>
     </div>
+
 
     @if (!string.IsNullOrEmpty(selectedFlightNumber))
     {
@@ -95,8 +115,13 @@
                         <div class="form-group">
                             <label for="passportNumber">Passport Number:</label>
                             <div class="input-group mb-3">
-                                <input type="text" id="passportNumber" class="form-control" @bind="passportNumber" placeholder="Enter passport number" disabled="@(!isCheckInAvailable)" />
-                                <button class="btn btn-primary" @onclick="SearchPassengerAsync" disabled="@(!isCheckInAvailable)">
+                                <input type="text" id="passportNumber" class="form-control"
+                                       @bind="passportNumber"
+                                       placeholder="Enter passport number"
+                                       disabled="@(!isCheckInAvailable)" />
+                                <button class="btn btn-primary"
+                                        @onclick="SearchPassengerAsync"
+                                        disabled="@(!isCheckInAvailable)">
                                     <i class="oi oi-magnifying-glass"></i> Search
                                 </button>
                             </div>
@@ -150,7 +175,6 @@
                                         <span class="badge bg-secondary">Economy Class</span>
                                     </div>
                                 </div>
-                                
                                 <div class="seat-map">
                                     <!-- Plane nose shape -->
                                     <div class="d-flex justify-content-center mb-3">
@@ -158,13 +182,12 @@
                                             FRONT
                                         </div>
                                     </div>
-                                    
+
                                     <!-- Business Class (First few rows) -->
                                     @for (int row = 1; row <= 3; row++)
                                     {
                                         <div class="seat-row">
                                             <div class="seat-row-label" style="width: 30px; text-align: center; font-weight: bold;">@row</div>
-                                            
                                             @foreach (var col in new[] { "A", "B" })
                                             {
                                                 string seatNumber = $"{row}{col}";
@@ -172,15 +195,13 @@
                                                 string seatClass = seat?.SeatClass?.ToLower() ?? "";
                                                 bool isAvailable = seat != null;
                                                 bool isSelected = isAvailable && seat.SeatId == selectedSeatId;
-                                                
-                                                <div class="@GetSeatClasses(isAvailable, isSelected, seatClass)" 
-                                                     @onclick="() => SelectSeat(seat?.SeatId ?? "")">
+
+                                                <div class="@GetSeatClasses(isAvailable, isSelected, seatClass)"
+                                                     @onclick="() => SelectSeat(seat?.SeatId ?? string.Empty)">
                                                     @seatNumber
                                                 </div>
                                             }
-                                            
                                             <div style="width: 40px;"></div> <!-- Aisle -->
-                                            
                                             @foreach (var col in new[] { "C", "D" })
                                             {
                                                 string seatNumber = $"{row}{col}";
@@ -188,24 +209,23 @@
                                                 string seatClass = seat?.SeatClass?.ToLower() ?? "";
                                                 bool isAvailable = seat != null;
                                                 bool isSelected = isAvailable && seat.SeatId == selectedSeatId;
-                                                
-                                                <div class="@GetSeatClasses(isAvailable, isSelected, seatClass)" 
-                                                     @onclick="() => SelectSeat(seat?.SeatId ?? "")">
+
+                                                <div class="@GetSeatClasses(isAvailable, isSelected, seatClass)"
+                                                     @onclick="() => SelectSeat(seat?.SeatId ?? string.Empty)">
                                                     @seatNumber
                                                 </div>
                                             }
                                         </div>
                                     }
-                                    
+
                                     <!-- Divider between classes -->
                                     <div class="my-3 border-bottom border-2"></div>
-                                    
+
                                     <!-- Economy Class (Remaining rows) -->
                                     @for (int row = 10; row <= 25; row++)
                                     {
                                         <div class="seat-row">
                                             <div class="seat-row-label" style="width: 30px; text-align: center; font-weight: bold;">@row</div>
-                                            
                                             @foreach (var col in new[] { "A", "B", "C" })
                                             {
                                                 string seatNumber = $"{row}{col}";
@@ -213,15 +233,13 @@
                                                 string seatClass = seat?.SeatClass?.ToLower() ?? "";
                                                 bool isAvailable = seat != null;
                                                 bool isSelected = isAvailable && seat.SeatId == selectedSeatId;
-                                                
-                                                <div class="@GetSeatClasses(isAvailable, isSelected, seatClass)" 
-                                                     @onclick="() => SelectSeat(seat?.SeatId ?? "")">
+
+                                                <div class="@GetSeatClasses(isAvailable, isSelected, seatClass)"
+                                                     @onclick="() => SelectSeat(seat?.SeatId ?? string.Empty)">
                                                     @seatNumber
                                                 </div>
                                             }
-                                            
                                             <div style="width: 40px;"></div> <!-- Aisle -->
-                                            
                                             @foreach (var col in new[] { "D", "E", "F" })
                                             {
                                                 string seatNumber = $"{row}{col}";
@@ -229,16 +247,16 @@
                                                 string seatClass = seat?.SeatClass?.ToLower() ?? "";
                                                 bool isAvailable = seat != null;
                                                 bool isSelected = isAvailable && seat.SeatId == selectedSeatId;
-                                                
-                                                <div class="@GetSeatClasses(isAvailable, isSelected, seatClass)" 
-                                                     @onclick="() => SelectSeat(seat?.SeatId ?? "")">
+
+                                                <div class="@GetSeatClasses(isAvailable, isSelected, seatClass)"
+                                                     @onclick="() => SelectSeat(seat?.SeatId ?? string.Empty)">
                                                     @seatNumber
                                                 </div>
                                             }
                                         </div>
                                     }
                                 </div>
-                                
+
                                 <!-- Seat legend -->
                                 <div class="seat-legend mt-3">
                                     <div class="seat-legend-item">
@@ -246,31 +264,41 @@
                                         <span>Unavailable</span>
                                     </div>
                                     <div class="seat-legend-item">
+                                        <div class="seat-legend-color" style="background-color: #f8f9fa;"></div>
+                                        <span>Available</span>
+                                    </div>
+                                    <div class="seat-legend-item">
+                                        <div class="seat-legend-color" style="background-color: #3498db;"></div>
+                                        <span>Selected</span>
+                                    </div>
+                                    <div class="seat-legend-item">
                                         <div class="seat-legend-color" style="background-color: #f1c40f;"></div>
                                         <span>Business Class</span>
                                     </div>
                                 </div>
-                            </div>
 
-                            <!-- Selected seat information -->
-                            @if (!string.IsNullOrEmpty(selectedSeatId))
-                            {
-                                var selectedSeat = availableSeats.FirstOrDefault(s => s.SeatId == selectedSeatId);
-                                if (selectedSeat != null)
+                                <!-- Selected seat information -->
+                                @if (!string.IsNullOrEmpty(selectedSeatId))
                                 {
-                                    <div class="alert alert-info mb-3">
-                                        <h5>Selected Seat</h5>
-                                        <p><strong>Seat Number:</strong> @selectedSeat.SeatNumber</p>
-                                        <p><strong>Class:</strong> @selectedSeat.SeatClass</p>
-                                        <p><strong>Price:</strong> @selectedSeat.Price.ToString("C")</p>
-                                    </div>
+                                    var selectedSeat = availableSeats.FirstOrDefault(s => s.SeatId == selectedSeatId);
+                                    if (selectedSeat != null)
+                                    {
+                                        <div class="alert alert-info mb-3">
+                                            <h5>Selected Seat</h5>
+                                            <p><strong>Seat Number:</strong> @selectedSeat.SeatNumber</p>
+                                            <p><strong>Class:</strong> @selectedSeat.SeatClass</p>
+                                            <p><strong>Price:</strong> @selectedSeat.Price.ToString("C")</p>
+                                        </div>
+                                    }
                                 }
-                            }
 
-                            <div class="d-grid">
-                                <button class="btn btn-success btn-lg" @onclick="ProcessCheckInAsync" disabled="@(!CanCheckIn())">
-                                    <i class="oi oi-check"></i> Check In Passenger
-                                </button>
+                                <div class="d-grid">
+                                    <button class="btn btn-success btn-lg"
+                                            @onclick="ProcessCheckInAsync"
+                                            disabled="@(!CanCheckIn())">
+                                        <i class="oi oi-check"></i> Check In Passenger
+                                    </button>
+                                </div>
                             </div>
                         }
                     </div>
@@ -397,15 +425,6 @@
         finally
         {
             isLoading = false;
-        }
-    }
-
-    private async Task OnFlightChanged(ChangeEventArgs e)
-    {
-        if (e.Value?.ToString() is string flightNumber)
-        {
-            selectedFlightNumber = flightNumber;
-            await UpdateFlightInfoAsync();
         }
     }
 
@@ -725,13 +744,4 @@
     {
         public string Error { get; set; } = string.Empty;
     }
-}item">
-                                        <div class="seat-legend-color" style="background-color: #f8f9fa;"></div>
-                                        <span>Available</span>
-                                    </div>
-                                    <div class="seat-legend-item">
-                                        <div class="seat-legend-color" style="background-color: #3498db;"></div>
-                                        <span>Selected</span>
-                                    </div>
-                                    <div class="seat-legend-item">
-                                        <div class="seat-legend-
+}

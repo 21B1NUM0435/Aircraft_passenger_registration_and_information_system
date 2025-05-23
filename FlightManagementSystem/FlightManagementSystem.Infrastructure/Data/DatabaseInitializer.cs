@@ -36,6 +36,8 @@ namespace FlightManagementSystem.Infrastructure.Data
 
         private static async Task SeedDataAsync(ApplicationDbContext context)
         {
+            await context.Database.EnsureCreatedAsync();
+
             // Add sample data only if tables are empty
             if (!await context.Aircraft.AnyAsync())
             {
