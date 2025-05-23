@@ -1,9 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using FlightManagementSystem.Core.Interfaces;
+﻿using FlightManagementSystem.Core.Interfaces;
 using FlightManagementSystem.Core.Services;
 using FlightManagementSystem.Infrastructure.Data;
 using FlightManagementSystem.Infrastructure.Data.Repositories;
@@ -35,7 +30,7 @@ namespace FlightManagementSystem.Infrastructure
             // Register unit of work
             services.AddScoped<IUnitOfWork, UnitOfWork>();
 
-            // Register services
+            // Register business services
             services.AddScoped<ICheckInService, CheckInService>();
             services.AddScoped<IFlightService, FlightService>();
             services.AddScoped<IBoardingPassService, BoardingPassService>();

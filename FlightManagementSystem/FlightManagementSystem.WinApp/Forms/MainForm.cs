@@ -1,6 +1,12 @@
 ﻿using FlightManagementSystem.WinApp.Models;
 using FlightManagementSystem.WinApp.Services;
 using Microsoft.AspNetCore.SignalR.Client;
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Linq;
+using System.Threading.Tasks;
+using System.Windows.Forms;
 
 namespace FlightManagementSystem.WinApp.Forms
 {
@@ -14,6 +20,12 @@ namespace FlightManagementSystem.WinApp.Forms
         private List<SeatDto> _availableSeats = new();
         private BookingDto? _currentBooking;
         private HubConnection? _hubConnection;
+        private SocketClient? _socketClient;
+
+        // Seat visualization
+        private Panel _seatMapPanel;
+        private Dictionary<string, Button> _seatButtons = new();
+        private string _selectedSeatId = "";
 
         public MainForm(ApiService apiService, string staffId, string staffName, string counterId)
         {
@@ -30,11 +42,361 @@ namespace FlightManagementSystem.WinApp.Forms
 
             // Initialize SignalR connection
             InitializeSignalRConnection();
+
+            // Create seat map panel
+            CreateSeatMapPanel();
+        }
+
+        private void CreateSeatMapPanel()
+        {
+            _seatMapPanel = new Panel
+            {
+                Size = new Size(700, 500),
+                Location = new Point(12, 400),
+                BorderStyle = BorderStyle.FixedSingle,
+                AutoScroll = true,
+                BackColor = Color.White
+            };
+
+            this.Controls.Add(_seatMapPanel);
+
+            // Add title label for seat map
+            var titleLabel = new Label
+            {
+                Text = "Aircraft Seat Map - Select Available Seat",
+                Font = new Font("Segoe UI", 12, FontStyle.Bold),
+                Location = new Point(12, 375),
+                Size = new Size(400, 25)
+            };
+            this.Controls.Add(titleLabel);
+        }
+
+        private void CreateSeatVisualization()
+        {
+            _seatMapPanel.Controls.Clear();
+            _seatButtons.Clear();
+
+            if (_availableSeats.Count == 0) return;
+
+            // Group seats by class and row
+            var businessSeats = _availableSeats.Where(s => s.SeatClass == "Business").ToList();
+            var economySeats = _availableSeats.Where(s => s.SeatClass == "Economy").ToList();
+
+            int yOffset = 20;
+
+            // Business Class Header
+            if (businessSeats.Any())
+            {
+                var businessHeader = new Label
+                {
+                    Text = "Business Class",
+                    Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                    Location = new Point(20, yOffset),
+                    Size = new Size(150, 20),
+                    ForeColor = Color.DarkBlue
+                };
+                _seatMapPanel.Controls.Add(businessHeader);
+                yOffset += 30;
+
+                // Create business class seats (2-2 configuration)
+                yOffset = CreateSeatRows(businessSeats, yOffset, new[] { "A", "B", "C", "D" }, 2, Color.Gold);
+                yOffset += 20; // Space between classes
+            }
+
+            // Economy Class Header
+            if (economySeats.Any())
+            {
+                var economyHeader = new Label
+                {
+                    Text = "Economy Class",
+                    Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                    Location = new Point(20, yOffset),
+                    Size = new Size(150, 20),
+                    ForeColor = Color.DarkGreen
+                };
+                _seatMapPanel.Controls.Add(economyHeader);
+                yOffset += 30;
+
+                // Create economy class seats (3-3 configuration)
+                CreateSeatRows(economySeats, yOffset, new[] { "A", "B", "C", "D", "E", "F" }, 3, Color.LightBlue);
+            }
+
+            // Add legend
+            CreateSeatLegend();
+        }
+
+        private int CreateSeatRows(List<SeatDto> seats, int startY, string[] columns, int seatsPerSide, Color seatColor)
+        {
+            // Group seats by row number
+            var seatsByRow = seats.GroupBy(s => ExtractRowNumber(s.SeatNumber))
+                                  .OrderBy(g => g.Key)
+                                  .ToList();
+
+            int yOffset = startY;
+
+            foreach (var rowGroup in seatsByRow)
+            {
+                int rowNumber = rowGroup.Key;
+                var rowSeats = rowGroup.ToList();
+
+                // Row number label
+                var rowLabel = new Label
+                {
+                    Text = rowNumber.ToString(),
+                    Location = new Point(20, yOffset + 5),
+                    Size = new Size(30, 25),
+                    TextAlign = ContentAlignment.MiddleCenter,
+                    Font = new Font("Segoe UI", 9, FontStyle.Bold)
+                };
+                _seatMapPanel.Controls.Add(rowLabel);
+
+                int xOffset = 60;
+                int seatIndex = 0;
+
+                foreach (var column in columns)
+                {
+                    var seat = rowSeats.FirstOrDefault(s => s.SeatNumber.EndsWith(column));
+
+                    var seatButton = new Button
+                    {
+                        Size = new Size(35, 35),
+                        Location = new Point(xOffset, yOffset),
+                        Text = seat?.SeatNumber ?? $"{rowNumber}{column}",
+                        Font = new Font("Segoe UI", 8, FontStyle.Bold),
+                        FlatStyle = FlatStyle.Flat,
+                        Tag = seat
+                    };
+
+                    if (seat != null)
+                    {
+                        // Available seat
+                        seatButton.BackColor = seatColor;
+                        seatButton.ForeColor = Color.Black;
+                        seatButton.Enabled = true;
+                        seatButton.Click += SeatButton_Click;
+                        _seatButtons[seat.SeatId] = seatButton;
+                    }
+                    else
+                    {
+                        // Occupied or unavailable seat
+                        seatButton.BackColor = Color.Gray;
+                        seatButton.ForeColor = Color.White;
+                        seatButton.Enabled = false;
+                    }
+
+                    _seatMapPanel.Controls.Add(seatButton);
+
+                    xOffset += 40;
+                    seatIndex++;
+
+                    // Add aisle space
+                    if (seatIndex == seatsPerSide)
+                    {
+                        xOffset += 20; // Aisle space
+                    }
+                }
+
+                yOffset += 45; // Move to next row
+            }
+
+            return yOffset;
+        }
+
+        private void CreateSeatLegend()
+        {
+            int legendY = _seatMapPanel.Height - 80;
+
+            // Available seat legend
+            var availableBox = new Panel
+            {
+                Size = new Size(20, 20),
+                Location = new Point(20, legendY),
+                BackColor = Color.LightBlue,
+                BorderStyle = BorderStyle.FixedSingle
+            };
+            _seatMapPanel.Controls.Add(availableBox);
+
+            var availableLabel = new Label
+            {
+                Text = "Available",
+                Location = new Point(50, legendY),
+                Size = new Size(70, 20)
+            };
+            _seatMapPanel.Controls.Add(availableLabel);
+
+            // Selected seat legend
+            var selectedBox = new Panel
+            {
+                Size = new Size(20, 20),
+                Location = new Point(130, legendY),
+                BackColor = Color.Red,
+                BorderStyle = BorderStyle.FixedSingle
+            };
+            _seatMapPanel.Controls.Add(selectedBox);
+
+            var selectedLabel = new Label
+            {
+                Text = "Selected",
+                Location = new Point(160, legendY),
+                Size = new Size(70, 20)
+            };
+            _seatMapPanel.Controls.Add(selectedLabel);
+
+            // Occupied seat legend
+            var occupiedBox = new Panel
+            {
+                Size = new Size(20, 20),
+                Location = new Point(240, legendY),
+                BackColor = Color.Gray,
+                BorderStyle = BorderStyle.FixedSingle
+            };
+            _seatMapPanel.Controls.Add(occupiedBox);
+
+            var occupiedLabel = new Label
+            {
+                Text = "Occupied",
+                Location = new Point(270, legendY),
+                Size = new Size(70, 20)
+            };
+            _seatMapPanel.Controls.Add(occupiedLabel);
+
+            // Business class legend
+            var businessBox = new Panel
+            {
+                Size = new Size(20, 20),
+                Location = new Point(350, legendY),
+                BackColor = Color.Gold,
+                BorderStyle = BorderStyle.FixedSingle
+            };
+            _seatMapPanel.Controls.Add(businessBox);
+
+            var businessLabel = new Label
+            {
+                Text = "Business",
+                Location = new Point(380, legendY),
+                Size = new Size(70, 20)
+            };
+            _seatMapPanel.Controls.Add(businessLabel);
+        }
+
+        private int ExtractRowNumber(string seatNumber)
+        {
+            // Extract row number from seat number (e.g., "12A" -> 12)
+            var rowPart = new string(seatNumber.TakeWhile(char.IsDigit).ToArray());
+            return int.TryParse(rowPart, out int row) ? row : 0;
+        }
+
+        private void SeatButton_Click(object sender, EventArgs e)
+        {
+            if (sender is Button button && button.Tag is SeatDto seat)
+            {
+                // Clear previous selection
+                if (!string.IsNullOrEmpty(_selectedSeatId) && _seatButtons.ContainsKey(_selectedSeatId))
+                {
+                    var prevButton = _seatButtons[_selectedSeatId];
+                    var prevSeat = prevButton.Tag as SeatDto;
+                    prevButton.BackColor = prevSeat?.SeatClass == "Business" ? Color.Gold : Color.LightBlue;
+                }
+
+                // Set new selection
+                _selectedSeatId = seat.SeatId;
+                button.BackColor = Color.Red;
+
+                // Update selected seat info
+                lblSelectedSeat.Text = $"Selected: {seat.SeatNumber} ({seat.SeatClass}) - ${seat.Price}";
+
+                // Enable check-in button
+                btnCheckIn.Enabled = _currentBooking != null && !_currentBooking.CheckedIn;
+            }
+        }
+
+        private async void OnSeatReservedFromSocket(string seatId, string flightNumber)
+        {
+            if (cboFlights.SelectedItem is FlightDto selectedFlight &&
+                selectedFlight.FlightNumber == flightNumber)
+            {
+                // Remove seat from available seats and update UI
+                this.Invoke((MethodInvoker)delegate
+                {
+                    var seatToRemove = _availableSeats.FirstOrDefault(s => s.SeatId == seatId);
+                    if (seatToRemove != null)
+                    {
+                        _availableSeats.Remove(seatToRemove);
+
+                        // Update seat button to show as occupied
+                        if (_seatButtons.ContainsKey(seatId))
+                        {
+                            var button = _seatButtons[seatId];
+                            button.BackColor = Color.Gray;
+                            button.ForeColor = Color.White;
+                            button.Enabled = false;
+                            _seatButtons.Remove(seatId);
+                        }
+
+                        // Clear selection if this seat was selected
+                        if (_selectedSeatId == seatId)
+                        {
+                            _selectedSeatId = "";
+                            lblSelectedSeat.Text = "Selected: None";
+                            btnCheckIn.Enabled = false;
+                        }
+                    }
+                });
+            }
+        }
+
+        private void OnFlightStatusChangedFromSocket(string flightNumber, string newStatus)
+        {
+            this.Invoke((MethodInvoker)delegate
+            {
+                var flight = _flights.FirstOrDefault(f => f.FlightNumber == flightNumber);
+                if (flight != null)
+                {
+                    flight.Status = newStatus;
+
+                    if (cboFlights.SelectedItem is FlightDto selectedFlight &&
+                        selectedFlight.FlightNumber == flightNumber)
+                    {
+                        UpdateFlightStatusUI(newStatus);
+                    }
+                }
+            });
         }
 
         private async void MainForm_Load(object sender, EventArgs e)
         {
             await LoadFlightsAsync();
+
+            // Initialize socket client here to avoid issues
+            try
+            {
+                _socketClient = new SocketClient("localhost", 5000);
+                _socketClient.OnSeatReserved += OnSeatReservedFromSocket;
+                _socketClient.OnFlightStatusChanged += OnFlightStatusChangedFromSocket;
+                await _socketClient.ConnectAsync();
+            }
+            catch (Exception ex)
+            {
+                // Log error but don't crash the application
+                MessageBox.Show($"Could not connect to socket server: {ex.Message}", "Connection Warning",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        private async Task NotifySocketServer(string message)
+        {
+            if (_socketClient != null)
+            {
+                try
+                {
+                    // Add your socket notification logic here
+                }
+                catch (Exception ex)
+                {
+                    // Log error but continue
+                    Console.WriteLine($"Socket notification error: {ex.Message}");
+                }
+            }
         }
 
         private async Task LoadFlightsAsync()
@@ -42,8 +404,6 @@ namespace FlightManagementSystem.WinApp.Forms
             try
             {
                 cboFlights.Items.Clear();
-
-                // Show loading indicator
                 UseWaitCursor = true;
 
                 _flights = await _apiService.GetFlightsAsync();
@@ -82,24 +442,12 @@ namespace FlightManagementSystem.WinApp.Forms
 
             try
             {
-                cboAvailableSeats.Items.Clear();
-
-                // Show loading indicator
                 UseWaitCursor = true;
-
                 _availableSeats = await _apiService.GetAvailableSeatsAsync(selectedFlight.FlightNumber);
 
-                foreach (var seat in _availableSeats)
-                {
-                    cboAvailableSeats.Items.Add(seat);
-                }
+                // Create seat visualization
+                CreateSeatVisualization();
 
-                if (cboAvailableSeats.Items.Count > 0)
-                {
-                    cboAvailableSeats.SelectedIndex = 0;
-                }
-
-                // Update UI with flight status
                 UpdateFlightStatusUI(selectedFlight.Status);
             }
             catch (Exception ex)
@@ -117,15 +465,18 @@ namespace FlightManagementSystem.WinApp.Forms
         {
             cboFlightStatus.Text = status;
 
-            // Enable/disable controls based on status
             bool isCheckInOpen = status == "CheckingIn";
 
             txtPassportNumber.Enabled = isCheckInOpen;
             btnSearch.Enabled = isCheckInOpen;
-            cboAvailableSeats.Enabled = isCheckInOpen;
-            btnCheckIn.Enabled = isCheckInOpen;
+            btnCheckIn.Enabled = isCheckInOpen && _currentBooking != null && !string.IsNullOrEmpty(_selectedSeatId);
 
-            // Update status label color
+            // Enable/disable seat selection
+            foreach (var button in _seatButtons.Values)
+            {
+                button.Enabled = isCheckInOpen;
+            }
+
             lblFlightStatus.Text = $"Status: {status}";
             lblFlightStatus.ForeColor = GetStatusColor(status);
         }
@@ -165,7 +516,6 @@ namespace FlightManagementSystem.WinApp.Forms
 
                 if (_currentBooking != null)
                 {
-                    // Display passenger info
                     lblPassengerName.Text = _currentBooking.PassengerName;
                     lblBookingReference.Text = _currentBooking.BookingReference;
 
@@ -178,7 +528,7 @@ namespace FlightManagementSystem.WinApp.Forms
                     }
                     else
                     {
-                        btnCheckIn.Enabled = true;
+                        btnCheckIn.Enabled = !string.IsNullOrEmpty(_selectedSeatId);
                     }
 
                     grpPassengerInfo.Visible = true;
@@ -206,22 +556,26 @@ namespace FlightManagementSystem.WinApp.Forms
         {
             lblPassengerName.Text = "";
             lblBookingReference.Text = "";
+            lblSelectedSeat.Text = "Selected: None";
             grpPassengerInfo.Visible = false;
             _currentBooking = null;
+
+            // Clear seat selection
+            if (!string.IsNullOrEmpty(_selectedSeatId) && _seatButtons.ContainsKey(_selectedSeatId))
+            {
+                var button = _seatButtons[_selectedSeatId];
+                var seat = button.Tag as SeatDto;
+                button.BackColor = seat?.SeatClass == "Business" ? Color.Gold : Color.LightBlue;
+            }
+            _selectedSeatId = "";
         }
 
+        [Obsolete]
         private async void btnCheckIn_Click(object sender, EventArgs e)
         {
-            if (_currentBooking == null)
+            if (_currentBooking == null || string.IsNullOrEmpty(_selectedSeatId))
             {
-                MessageBox.Show("Please search for a passenger first.", "Error",
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            if (cboAvailableSeats.SelectedItem is not SeatDto selectedSeat)
-            {
-                MessageBox.Show("Please select a seat.", "Error",
+                MessageBox.Show("Please search for a passenger and select a seat first.", "Error",
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
@@ -234,7 +588,7 @@ namespace FlightManagementSystem.WinApp.Forms
                 {
                     BookingReference = _currentBooking.BookingReference,
                     FlightNumber = _currentBooking.FlightNumber,
-                    SeatId = selectedSeat.SeatId,
+                    SeatId = _selectedSeatId,
                     StaffId = _staffId,
                     CounterId = _counterId,
                     PassengerName = _currentBooking.PassengerName
@@ -248,35 +602,23 @@ namespace FlightManagementSystem.WinApp.Forms
                         MessageBoxButtons.OK, MessageBoxIcon.Information);
 
                     // Print boarding pass
-                    if (boardingPassPdf != null && boardingPassPdf.Length > 0)
+                    if (cboFlights.SelectedItem is FlightDto selectedFlight)
                     {
-                        var tempFile = Path.GetTempFileName() + ".pdf";
-                        File.WriteAllBytes(tempFile, boardingPassPdf);
+                        var selectedSeat = _availableSeats.FirstOrDefault(s => s.SeatId == _selectedSeatId);
 
-                        // Open the PDF file
-                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                        {
-                            FileName = tempFile,
-                            UseShellExecute = true
-                        });
+                        PrintService.PrintBoardingPass(
+                            _currentBooking.PassengerName,
+                            selectedFlight.FlightNumber,
+                            selectedFlight.Origin,
+                            selectedFlight.Destination,
+                            "A12", // Gate would come from the API in a real system
+                            selectedFlight.DepartureTime,
+                            selectedSeat?.SeatNumber ?? "N/A",
+                            _currentBooking.BookingReference);
                     }
-                    else
-                    {
-                        // If we didn't get a PDF from the API, generate one locally
-                        // (normally we'd just use the one from the API)
-                        if (cboFlights.SelectedItem is FlightDto selectedFlight)
-                        {
-                            PrintService.PrintBoardingPass(
-                                _currentBooking.PassengerName,
-                                selectedFlight.FlightNumber,
-                                selectedFlight.Origin,
-                                selectedFlight.Destination,
-                                "TBD", // Gate would come from the API in a real system
-                                selectedFlight.DepartureTime,
-                                selectedSeat.SeatNumber,
-                                _currentBooking.BookingReference);
-                        }
-                    }
+
+                    // Send socket notification to other terminals
+                    await _socketClient.NotifySeatReservedAsync(_selectedSeatId, _currentBooking.FlightNumber);
 
                     // Clear the form for the next passenger
                     ClearPassengerInfo();
@@ -309,7 +651,6 @@ namespace FlightManagementSystem.WinApp.Forms
 
             var newStatus = cboFlightStatus.Text;
 
-            // Check if status has changed
             if (newStatus == selectedFlight.Status)
             {
                 MessageBox.Show("Flight status is already set to this value.", "No Change",
@@ -328,11 +669,11 @@ namespace FlightManagementSystem.WinApp.Forms
                     MessageBox.Show("Flight status updated successfully.", "Success",
                         MessageBoxButtons.OK, MessageBoxIcon.Information);
 
-                    // Update the selected flight's status in our local list
                     selectedFlight.Status = newStatus;
-
-                    // Update UI with new status
                     UpdateFlightStatusUI(newStatus);
+
+                    // Notify other terminals via socket
+                    await _socketClient.NotifyFlightStatusChangedAsync(selectedFlight.FlightNumber, newStatus);
                 }
                 else
                 {
@@ -355,7 +696,6 @@ namespace FlightManagementSystem.WinApp.Forms
         {
             try
             {
-                // Get base URL from API service
                 string baseUrl = _apiService.HttpClient.BaseAddress?.ToString() ?? "https://localhost:7215";
 
                 _hubConnection = new HubConnectionBuilder()
@@ -363,23 +703,19 @@ namespace FlightManagementSystem.WinApp.Forms
                     .WithAutomaticReconnect()
                     .Build();
 
-                // Handle flight status updates
                 _hubConnection.On<dynamic>("FlightStatusChanged", async (message) =>
                 {
                     string flightNumber = message.FlightNumber.ToString();
                     string newStatus = message.NewStatus.ToString();
 
-                    // Update the matching flight in our flights list
                     var flight = _flights.FirstOrDefault(f => f.FlightNumber == flightNumber);
                     if (flight != null)
                     {
                         flight.Status = newStatus;
 
-                        // If this is the currently selected flight, update the UI
                         if (cboFlights.SelectedItem is FlightDto selectedFlight &&
                             selectedFlight.FlightNumber == flightNumber)
                         {
-                            // We need to use Invoke because we're on a different thread
                             this.Invoke((MethodInvoker)delegate
                             {
                                 UpdateFlightStatusUI(newStatus);
@@ -388,29 +724,10 @@ namespace FlightManagementSystem.WinApp.Forms
                     }
                 });
 
-                // Handle seat assignments
-                _hubConnection.On<dynamic>("SeatAssigned", async (message) =>
-                {
-                    string flightNumber = message.FlightNumber.ToString();
-                    string seatId = message.SeatId.ToString();
-                    bool isAssigned = (bool)message.IsAssigned;
-
-                    // If this is for the currently selected flight, refresh the available seats
-                    if (cboFlights.SelectedItem is FlightDto selectedFlight &&
-                        selectedFlight.FlightNumber == flightNumber)
-                    {
-                        this.Invoke((MethodInvoker)async delegate
-                        {
-                            await LoadAvailableSeatsAsync();
-                        });
-                    }
-                });
-
                 await _hubConnection.StartAsync();
             }
             catch (Exception ex)
             {
-                // Just log the error but don't crash the application
                 Console.WriteLine($"Error connecting to SignalR hub: {ex.Message}");
             }
         }
@@ -419,14 +736,19 @@ namespace FlightManagementSystem.WinApp.Forms
         {
             base.OnFormClosing(e);
 
-            // Dispose of the SignalR connection
             if (_hubConnection != null)
             {
                 _ = _hubConnection.DisposeAsync();
             }
+
+            if (_socketClient != null)
+            {
+                _socketClient.Disconnect();
+                _socketClient.Dispose();
+            }
         }
 
-        // Designer-generated code for the form
+        // Updated Designer-generated code with new controls
         private void InitializeComponent()
         {
             lblStaffName = new Label();
@@ -442,8 +764,7 @@ namespace FlightManagementSystem.WinApp.Forms
             btnSearch = new Button();
             txtPassportNumber = new TextBox();
             label1 = new Label();
-            cboAvailableSeats = new ComboBox();
-            label3 = new Label();
+            lblSelectedSeat = new Label();
             grpPassengerInfo = new GroupBox();
             btnCheckIn = new Button();
             lblBookingReference = new Label();
@@ -454,6 +775,7 @@ namespace FlightManagementSystem.WinApp.Forms
             groupBox2.SuspendLayout();
             grpPassengerInfo.SuspendLayout();
             SuspendLayout();
+
             // 
             // lblStaffName
             // 
@@ -464,6 +786,7 @@ namespace FlightManagementSystem.WinApp.Forms
             lblStaffName.Size = new Size(104, 20);
             lblStaffName.TabIndex = 0;
             lblStaffName.Text = "Staff Name: -";
+
             // 
             // lblCounterId
             // 
@@ -474,6 +797,7 @@ namespace FlightManagementSystem.WinApp.Forms
             lblCounterId.Size = new Size(85, 20);
             lblCounterId.TabIndex = 1;
             lblCounterId.Text = "Counter: -";
+
             // 
             // groupBox1
             // 
@@ -490,6 +814,7 @@ namespace FlightManagementSystem.WinApp.Forms
             groupBox1.TabIndex = 2;
             groupBox1.TabStop = false;
             groupBox1.Text = "Flight Selection";
+
             // 
             // cboFlightStatus
             // 
@@ -500,6 +825,7 @@ namespace FlightManagementSystem.WinApp.Forms
             cboFlightStatus.Name = "cboFlightStatus";
             cboFlightStatus.Size = new Size(151, 28);
             cboFlightStatus.TabIndex = 5;
+
             // 
             // btnUpdateStatus
             // 
@@ -513,6 +839,7 @@ namespace FlightManagementSystem.WinApp.Forms
             btnUpdateStatus.Text = "Update Status";
             btnUpdateStatus.UseVisualStyleBackColor = false;
             btnUpdateStatus.Click += btnUpdateStatus_Click;
+
             // 
             // lblFlightStatus
             // 
@@ -523,6 +850,7 @@ namespace FlightManagementSystem.WinApp.Forms
             lblFlightStatus.Size = new Size(78, 20);
             lblFlightStatus.TabIndex = 3;
             lblFlightStatus.Text = "Status: —";
+
             // 
             // btnRefreshFlights
             // 
@@ -536,6 +864,7 @@ namespace FlightManagementSystem.WinApp.Forms
             btnRefreshFlights.Text = "Refresh";
             btnRefreshFlights.UseVisualStyleBackColor = false;
             btnRefreshFlights.Click += async (s, e) => await LoadFlightsAsync();
+
             // 
             // label2
             // 
@@ -545,6 +874,7 @@ namespace FlightManagementSystem.WinApp.Forms
             label2.Size = new Size(73, 20);
             label2.TabIndex = 1;
             label2.Text = "Flight No:";
+
             // 
             // cboFlights
             // 
@@ -555,6 +885,7 @@ namespace FlightManagementSystem.WinApp.Forms
             cboFlights.Size = new Size(506, 28);
             cboFlights.TabIndex = 0;
             cboFlights.SelectedIndexChanged += cboFlights_SelectedIndexChanged;
+
             // 
             // groupBox2
             // 
@@ -562,14 +893,14 @@ namespace FlightManagementSystem.WinApp.Forms
             groupBox2.Controls.Add(btnSearch);
             groupBox2.Controls.Add(txtPassportNumber);
             groupBox2.Controls.Add(label1);
-            groupBox2.Controls.Add(cboAvailableSeats);
-            groupBox2.Controls.Add(label3);
+            groupBox2.Controls.Add(lblSelectedSeat);
             groupBox2.Location = new Point(12, 224);
             groupBox2.Name = "groupBox2";
             groupBox2.Size = new Size(776, 125);
             groupBox2.TabIndex = 3;
             groupBox2.TabStop = false;
             groupBox2.Text = "Passenger Check-In";
+
             // 
             // btnSearch
             // 
@@ -583,6 +914,7 @@ namespace FlightManagementSystem.WinApp.Forms
             btnSearch.Text = "Search";
             btnSearch.UseVisualStyleBackColor = false;
             btnSearch.Click += btnSearch_Click;
+
             // 
             // txtPassportNumber
             // 
@@ -590,6 +922,7 @@ namespace FlightManagementSystem.WinApp.Forms
             txtPassportNumber.Name = "txtPassportNumber";
             txtPassportNumber.Size = new Size(453, 27);
             txtPassportNumber.TabIndex = 3;
+
             // 
             // label1
             // 
@@ -599,24 +932,18 @@ namespace FlightManagementSystem.WinApp.Forms
             label1.Size = new Size(126, 20);
             label1.TabIndex = 2;
             label1.Text = "Passport Number:";
+
             // 
-            // cboAvailableSeats
+            // lblSelectedSeat
             // 
-            cboAvailableSeats.DropDownStyle = ComboBoxStyle.DropDownList;
-            cboAvailableSeats.FormattingEnabled = true;
-            cboAvailableSeats.Location = new Point(157, 78);
-            cboAvailableSeats.Name = "cboAvailableSeats";
-            cboAvailableSeats.Size = new Size(453, 28);
-            cboAvailableSeats.TabIndex = 1;
-            // 
-            // label3
-            // 
-            label3.AutoSize = true;
-            label3.Location = new Point(25, 81);
-            label3.Name = "label3";
-            label3.Size = new Size(98, 20);
-            label3.TabIndex = 0;
-            label3.Text = "Assign Seat:";
+            lblSelectedSeat.AutoSize = true;
+            lblSelectedSeat.Font = new Font("Segoe UI", 9F, FontStyle.Bold, GraphicsUnit.Point);
+            lblSelectedSeat.Location = new Point(25, 81);
+            lblSelectedSeat.Name = "lblSelectedSeat";
+            lblSelectedSeat.Size = new Size(104, 20);
+            lblSelectedSeat.TabIndex = 0;
+            lblSelectedSeat.Text = "Selected: None";
+
             // 
             // grpPassengerInfo
             // 
@@ -626,77 +953,82 @@ namespace FlightManagementSystem.WinApp.Forms
             grpPassengerInfo.Controls.Add(lblPassengerName);
             grpPassengerInfo.Controls.Add(label5);
             grpPassengerInfo.Controls.Add(label4);
-            grpPassengerInfo.Location = new Point(12, 355);
+            grpPassengerInfo.Location = new Point(730, 400);
             grpPassengerInfo.Name = "grpPassengerInfo";
-            grpPassengerInfo.Size = new Size(776, 125);
+            grpPassengerInfo.Size = new Size(300, 125);
             grpPassengerInfo.TabIndex = 4;
             grpPassengerInfo.TabStop = false;
             grpPassengerInfo.Text = "Passenger Information";
             grpPassengerInfo.Visible = false;
+
             // 
             // btnCheckIn
             // 
-            btnCheckIn.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             btnCheckIn.BackColor = Color.FromArgb(46, 204, 113);
             btnCheckIn.FlatStyle = FlatStyle.Flat;
             btnCheckIn.ForeColor = Color.White;
-            btnCheckIn.Location = new Point(616, 48);
+            btnCheckIn.Location = new Point(150, 48);
             btnCheckIn.Name = "btnCheckIn";
             btnCheckIn.Size = new Size(131, 41);
             btnCheckIn.TabIndex = 4;
             btnCheckIn.Text = "Check In";
             btnCheckIn.UseVisualStyleBackColor = false;
             btnCheckIn.Click += btnCheckIn_Click;
+
             // 
             // lblBookingReference
             // 
             lblBookingReference.AutoSize = true;
             lblBookingReference.Font = new Font("Segoe UI", 9F, FontStyle.Bold, GraphicsUnit.Point);
-            lblBookingReference.Location = new Point(170, 76);
+            lblBookingReference.Location = new Point(15, 76);
             lblBookingReference.Name = "lblBookingReference";
             lblBookingReference.Size = new Size(14, 20);
             lblBookingReference.TabIndex = 3;
             lblBookingReference.Text = "-";
+
             // 
             // lblPassengerName
             // 
             lblPassengerName.AutoSize = true;
             lblPassengerName.Font = new Font("Segoe UI", 9F, FontStyle.Bold, GraphicsUnit.Point);
-            lblPassengerName.Location = new Point(170, 38);
+            lblPassengerName.Location = new Point(15, 38);
             lblPassengerName.Name = "lblPassengerName";
             lblPassengerName.Size = new Size(14, 20);
             lblPassengerName.TabIndex = 2;
             lblPassengerName.Text = "-";
+
             // 
             // label5
             // 
             label5.AutoSize = true;
-            label5.Location = new Point(25, 76);
+            label5.Location = new Point(15, 56);
             label5.Name = "label5";
-            label5.Size = new Size(139, 20);
+            label5.Size = new Size(76, 20);
             label5.TabIndex = 1;
-            label5.Text = "Booking Reference:";
+            label5.Text = "Booking#:";
+
             // 
             // label4
             // 
             label4.AutoSize = true;
-            label4.Location = new Point(25, 38);
+            label4.Location = new Point(15, 18);
             label4.Name = "label4";
             label4.Size = new Size(52, 20);
             label4.TabIndex = 0;
             label4.Text = "Name:";
+
             // 
             // MainForm
             // 
             AutoScaleDimensions = new SizeF(8F, 20F);
             AutoScaleMode = AutoScaleMode.Font;
-            ClientSize = new Size(800, 500);
+            ClientSize = new Size(1050, 950);
             Controls.Add(grpPassengerInfo);
             Controls.Add(groupBox2);
             Controls.Add(groupBox1);
             Controls.Add(lblCounterId);
             Controls.Add(lblStaffName);
-            MinimumSize = new Size(818, 547);
+            MinimumSize = new Size(1068, 997);
             Name = "MainForm";
             StartPosition = FormStartPosition.CenterScreen;
             Text = "Flight Check-In System";
@@ -721,8 +1053,7 @@ namespace FlightManagementSystem.WinApp.Forms
         private Button btnSearch;
         private TextBox txtPassportNumber;
         private Label label1;
-        private ComboBox cboAvailableSeats;
-        private Label label3;
+        private Label lblSelectedSeat;
         private GroupBox grpPassengerInfo;
         private Button btnCheckIn;
         private Label lblBookingReference;
@@ -732,5 +1063,5 @@ namespace FlightManagementSystem.WinApp.Forms
         private Label lblFlightStatus;
         private Button btnUpdateStatus;
         private ComboBox cboFlightStatus;
-    };
+    }
 }

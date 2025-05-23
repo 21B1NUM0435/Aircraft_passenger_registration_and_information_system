@@ -1,5 +1,4 @@
-﻿using FlightManagementSystem.Core.Models;
-using Microsoft.AspNetCore.SignalR;
+﻿using Microsoft.AspNetCore.SignalR;
 
 namespace FlightManagementSystem.Web.Hubs
 {
@@ -36,7 +35,6 @@ namespace FlightManagementSystem.Web.Hubs
             _logger.LogInformation("Client {ConnectionId} left flight group {FlightNumber}", Context.ConnectionId, flightNumber);
         }
 
-        // Method for clients to get initial flight status
         public Task SubscribeToFlightUpdates(string flightNumber)
         {
             _logger.LogInformation("Client {ConnectionId} subscribed to flight updates for {FlightNumber}", Context.ConnectionId, flightNumber);

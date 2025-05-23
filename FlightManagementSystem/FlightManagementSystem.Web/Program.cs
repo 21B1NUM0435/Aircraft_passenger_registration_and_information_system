@@ -2,7 +2,6 @@ using FlightManagementSystem.Core.Interfaces;
 using FlightManagementSystem.Infrastructure;
 using FlightManagementSystem.Infrastructure.Data;
 using FlightManagementSystem.Infrastructure.SocketServer;
-using FlightManagementSystem.Web;
 using FlightManagementSystem.Web.Extensions;
 using Microsoft.EntityFrameworkCore;
 
@@ -18,20 +17,26 @@ builder.Configuration["ConnectionStrings:DefaultConnection"] = connectionString;
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlite(connectionString));
 
-// Add Infrastructure services
+// Add Infrastructure services (this includes repositories and business logic services)
 builder.Services.AddInfrastructure(builder.Configuration);
 
 // Add controllers and API Explorer
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
-builder.Services.AddRazorComponents().AddInteractiveServerComponents();
+
+// Add Blazor components with anti-forgery
+builder.Services.AddRazorComponents()
+    .AddInteractiveServerComponents();
+
+// Add anti-forgery services
+builder.Services.AddAntiforgery();
 
 // Add CORS
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAllOrigins",
-        builder => builder
+        policy => policy
             .AllowAnyOrigin()
             .AllowAnyMethod()
             .AllowAnyHeader());
@@ -45,7 +50,7 @@ builder.Services.AddSingleton<ISocketServer>(provider =>
     return new FlightSocketServer(logger, port);
 });
 
-// Add SignalR services
+// Add SignalR services (this will register FlightHubService)
 builder.Services.AddSignalRServices();
 
 // Add hosted service to start Socket Server
@@ -68,49 +73,58 @@ else
 
 app.UseHttpsRedirection();
 app.UseStaticFiles();
+
+// Important: Middleware order matters!
 app.UseRouting();
 app.UseCors("AllowAllOrigins");
-
-// Add anti-forgery middleware (REQUIRED for Blazor Server)
-app.UseAntiforgery();
-
+app.UseAuthentication();  // If using authentication
 app.UseAuthorization();
+app.UseAntiforgery();     // Add anti-forgery middleware after authorization
 
-// Map controllers and SignalR endpoints
+// Map controllers
 app.MapControllers();
-app.UseSignalREndpoints();
+
+// Map SignalR endpoints
+app.MapHub<FlightManagementSystem.Web.Hubs.FlightHub>("/flighthub");
+
+// Map Blazor components
 app.MapRazorComponents<FlightManagementSystem.Web.Components.App>()
     .AddInteractiveServerRenderMode();
 
 // Initialize the database
-await DatabaseInitializer.InitializeDatabaseAsync(app.Services);
+try
+{
+    await DatabaseInitializer.InitializeDatabaseAsync(app.Services);
+}
+catch (Exception ex)
+{
+    var logger = app.Services.GetRequiredService<ILogger<Program>>();
+    logger.LogError(ex, "An error occurred while initializing the database");
+}
 
 app.Run();
 
-// SocketServerHostedService.cs
-namespace FlightManagementSystem.Web
+// SocketServerHostedService - Define in the same file to avoid namespace issues
+public class SocketServerHostedService : IHostedService
 {
-    public class SocketServerHostedService : IHostedService
+    private readonly ISocketServer _socketServer;
+    private readonly ILogger<SocketServerHostedService> _logger;
+
+    public SocketServerHostedService(ISocketServer socketServer, ILogger<SocketServerHostedService> logger)
     {
-        private readonly ISocketServer _socketServer;
-        private readonly ILogger<SocketServerHostedService> _logger;
+        _socketServer = socketServer;
+        _logger = logger;
+    }
 
-        public SocketServerHostedService(ISocketServer socketServer, ILogger<SocketServerHostedService> logger)
-        {
-            _socketServer = socketServer;
-            _logger = logger;
-        }
+    public async Task StartAsync(CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Starting Socket Server");
+        await _socketServer.StartAsync(cancellationToken);
+    }
 
-        public async Task StartAsync(CancellationToken cancellationToken)
-        {
-            _logger.LogInformation("Starting Socket Server");
-            await _socketServer.StartAsync(cancellationToken);
-        }
-
-        public async Task StopAsync(CancellationToken cancellationToken)
-        {
-            _logger.LogInformation("Stopping Socket Server");
-            await _socketServer.StopAsync();
-        }
+    public async Task StopAsync(CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Stopping Socket Server");
+        await _socketServer.StopAsync();
     }
 }
