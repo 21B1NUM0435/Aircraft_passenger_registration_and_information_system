@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.SignalR;
 using FlightSystem.Server.Data;
 using FlightSystem.Server.Models;
 using FlightSystem.Server.Hubs;
+using FlightSystem.Server.Services;
 
 namespace FlightSystem.Server.Controllers;
 
@@ -11,13 +12,13 @@ namespace FlightSystem.Server.Controllers;
 [Route("api/[controller]")]
 public class FlightsController : ControllerBase
 {
-    private readonly FlightDbContext _context;
+    private readonly IFlightService _flightService;
     private readonly IHubContext<FlightHub> _hubContext;
     private readonly ILogger<FlightsController> _logger;
 
-    public FlightsController(FlightDbContext context, IHubContext<FlightHub> hubContext, ILogger<FlightsController> logger)
+    public FlightsController(IFlightService flightService, IHubContext<FlightHub> hubContext, ILogger<FlightsController> logger)
     {
-        _context = context;
+        _flightService = flightService;
         _hubContext = hubContext;
         _logger = logger;
     }
@@ -26,11 +27,7 @@ public class FlightsController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<IEnumerable<Flight>>> GetFlights()
     {
-        var flights = await _context.Flights
-            .Include(f => f.Seats)
-            .Include(f => f.Bookings)
-            .ToListAsync();
-
+        var flights = await _flightService.GetAllFlightsAsync();
         return Ok(flights);
     }
 
@@ -38,11 +35,7 @@ public class FlightsController : ControllerBase
     [HttpGet("{flightNumber}")]
     public async Task<ActionResult<Flight>> GetFlight(string flightNumber)
     {
-        var flight = await _context.Flights
-            .Include(f => f.Seats)
-            .Include(f => f.Bookings)
-            .ThenInclude(b => b.Passenger)
-            .FirstOrDefaultAsync(f => f.FlightNumber == flightNumber);
+        var flight = await _flightService.GetFlightAsync(flightNumber);
 
         if (flight == null)
         {
@@ -58,16 +51,19 @@ public class FlightsController : ControllerBase
     {
         _logger.LogInformation("🔄 Updating flight {FlightNumber} status to {Status}", flightNumber, newStatus);
 
-        var flight = await _context.Flights.FindAsync(flightNumber);
+        var flight = await _flightService.GetFlightAsync(flightNumber);
         if (flight == null)
         {
             return NotFound();
         }
 
         var oldStatus = flight.Status;
-        flight.Status = newStatus;
+        var success = await _flightService.UpdateFlightStatusAsync(flightNumber, newStatus);
 
-        await _context.SaveChangesAsync();
+        if (!success)
+        {
+            return BadRequest(new { message = "Failed to update flight status" });
+        }
 
         // Broadcast to all connected clients via SignalR
         await _hubContext.Clients.All.SendAsync("FlightStatusChanged", new
@@ -94,11 +90,7 @@ public class FlightsController : ControllerBase
     [HttpGet("{flightNumber}/available-seats")]
     public async Task<ActionResult<IEnumerable<Seat>>> GetAvailableSeats(string flightNumber)
     {
-        var seats = await _context.Seats
-            .Where(s => s.FlightNumber == flightNumber && s.IsAvailable)
-            .OrderBy(s => s.SeatNumber)
-            .ToListAsync();
-
+        var seats = await _flightService.GetAvailableSeatsAsync(flightNumber);
         return Ok(seats);
     }
 }

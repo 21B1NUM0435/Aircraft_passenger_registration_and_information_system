@@ -4,11 +4,11 @@ using FlightSystem.Server.Hubs;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Force HTTP only on port 5000 to avoid port conflicts
-builder.WebHost.UseUrls("http://localhost:5000");
+// Force HTTP only on port 5555 to avoid port conflicts
+builder.WebHost.UseUrls("http://localhost:5555");
 
 Console.WriteLine("🚀 Starting Flight Management System Server");
-Console.WriteLine("🌐 Server will run on: http://localhost:5000");
+Console.WriteLine("🌐 Server will run on: http://localhost:5555");
 
 // Add services to the container
 builder.Services.AddControllers();
@@ -43,6 +43,9 @@ builder.Services.AddCors(options =>
 builder.Services.AddRazorPages();
 builder.Services.AddServerSideBlazor();
 
+// Add Flight Service
+builder.Services.AddScoped<FlightSystem.Server.Services.IFlightService, FlightSystem.Server.Services.FlightService>();
+
 var app = builder.Build();
 
 Console.WriteLine("🔧 Configuring application pipeline");
@@ -69,6 +72,7 @@ app.MapHub<FlightHub>("/flighthub");
 app.MapRazorPages();
 app.MapBlazorHub();
 app.MapGet("/", () => Results.Redirect("/flights"));
+app.MapGet("/admin", () => Results.Redirect("/dashboard"));
 
 Console.WriteLine("💾 Initializing database...");
 

@@ -8,8 +8,7 @@ public partial class MainForm : Form
 {
     private readonly SignalRService _signalRService;
     private readonly HttpClient _httpClient;
-    private readonly ILogger<MainForm>? _logger;
-    private readonly string _serverUrl = "http://localhost:5000"; // Use standard HTTP port
+    private readonly string _serverUrl = Environment.GetEnvironmentVariable("FLIGHT_SERVER_URL") ?? "http://localhost:5000";
 
     // Form controls
     private ComboBox cmbFlights = new();
