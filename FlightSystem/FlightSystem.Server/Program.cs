@@ -2,7 +2,15 @@ using Microsoft.EntityFrameworkCore;
 using FlightSystem.Server.Data;
 using FlightSystem.Server.Hubs;
 
+
 var builder = WebApplication.CreateBuilder(args);
+
+// Add Flight Service
+builder.Services.AddScoped<FlightSystem.Server.Services.IFlightService, FlightSystem.Server.Services.FlightService>();
+
+// Add Concurrency Service for race condition handling
+builder.Services.AddSingleton<FlightSystem.Server.Services.IConcurrencyService, FlightSystem.Server.Services.ConcurrencyService>();
+
 
 // Force HTTP only on port 5555 to avoid port conflicts
 builder.WebHost.UseUrls("http://localhost:5555");
