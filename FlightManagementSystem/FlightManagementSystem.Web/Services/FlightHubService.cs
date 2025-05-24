@@ -18,55 +18,83 @@ namespace FlightManagementSystem.Web.Services
 
         public async Task NotifyFlightStatusChanged(string flightNumber, FlightStatus newStatus)
         {
-            await _hubContext.Clients.All.SendAsync("FlightStatusChanged", new
+            try
             {
-                FlightNumber = flightNumber,
-                NewStatus = newStatus.ToString(),
-                Timestamp = DateTime.UtcNow
-            });
+                await _hubContext.Clients.All.SendAsync("FlightStatusChanged", new
+                {
+                    FlightNumber = flightNumber,
+                    NewStatus = newStatus.ToString(),
+                    Timestamp = DateTime.UtcNow
+                });
 
-            _logger.LogInformation("Notified all clients of flight {FlightNumber} status change to {Status}",
-                flightNumber, newStatus);
+                _logger.LogInformation("Notified all clients of flight {FlightNumber} status change to {Status}",
+                    flightNumber, newStatus);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error notifying flight status change for {FlightNumber}", flightNumber);
+            }
         }
 
         public async Task NotifySeatAssigned(string flightNumber, string seatId, bool isAssigned)
         {
-            await _hubContext.Clients.Group($"flight-{flightNumber}").SendAsync("SeatAssigned", new
+            try
             {
-                FlightNumber = flightNumber,
-                SeatId = seatId,
-                IsAssigned = isAssigned,
-                Timestamp = DateTime.UtcNow
-            });
+                await _hubContext.Clients.Group($"flight-{flightNumber}").SendAsync("SeatAssigned", new
+                {
+                    FlightNumber = flightNumber,
+                    SeatId = seatId,
+                    IsAssigned = isAssigned,
+                    Timestamp = DateTime.UtcNow
+                });
 
-            _logger.LogInformation("Notified flight group {FlightNumber} of seat {SeatId} assignment",
-                flightNumber, seatId);
+                _logger.LogInformation("Notified flight group {FlightNumber} of seat {SeatId} assignment",
+                    flightNumber, seatId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error notifying seat assignment for {FlightNumber}", flightNumber);
+            }
         }
 
         public async Task NotifyPassengerCheckedIn(string flightNumber, string passengerName)
         {
-            await _hubContext.Clients.Group($"flight-{flightNumber}").SendAsync("PassengerCheckedIn", new
+            try
             {
-                FlightNumber = flightNumber,
-                PassengerName = passengerName,
-                Timestamp = DateTime.UtcNow
-            });
+                await _hubContext.Clients.Group($"flight-{flightNumber}").SendAsync("PassengerCheckedIn", new
+                {
+                    FlightNumber = flightNumber,
+                    PassengerName = passengerName,
+                    Timestamp = DateTime.UtcNow
+                });
 
-            _logger.LogInformation("Notified flight group {FlightNumber} of passenger {PassengerName} check-in",
-                flightNumber, passengerName);
+                _logger.LogInformation("Notified flight group {FlightNumber} of passenger {PassengerName} check-in",
+                    flightNumber, passengerName);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error notifying passenger check-in for {FlightNumber}", flightNumber);
+            }
         }
 
         public async Task NotifyBoardingStarted(string flightNumber, string gate)
         {
-            await _hubContext.Clients.Group($"flight-{flightNumber}").SendAsync("BoardingStarted", new
+            try
             {
-                FlightNumber = flightNumber,
-                Gate = gate,
-                Timestamp = DateTime.UtcNow
-            });
+                await _hubContext.Clients.Group($"flight-{flightNumber}").SendAsync("BoardingStarted", new
+                {
+                    FlightNumber = flightNumber,
+                    Gate = gate,
+                    Timestamp = DateTime.UtcNow
+                });
 
-            _logger.LogInformation("Notified flight group {FlightNumber} that boarding has started at gate {Gate}",
-                flightNumber, gate);
+                _logger.LogInformation("Notified flight group {FlightNumber} that boarding has started at gate {Gate}",
+                    flightNumber, gate);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error notifying boarding start for {FlightNumber}", flightNumber);
+            }
         }
     }
 }

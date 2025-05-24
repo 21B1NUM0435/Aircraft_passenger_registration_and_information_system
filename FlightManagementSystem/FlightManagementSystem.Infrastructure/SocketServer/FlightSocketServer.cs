@@ -22,6 +22,10 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
         private readonly ConcurrentDictionary<Guid, ClientConnection> _clients = new();
         private Task? _serverTask;
 
+        // Message queue for reliable delivery
+        private readonly ConcurrentQueue<BroadcastMessage> _messageQueue = new();
+        private Task? _messageProcessorTask;
+
         public FlightSocketServer(ILogger<FlightSocketServer> logger, int port = 5000)
         {
             _logger = logger;
@@ -37,6 +41,10 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
 
             _logger.LogInformation("Socket server started on port {Port}", _port);
 
+            // Start message processor
+            _messageProcessorTask = Task.Run(async () => await ProcessMessageQueueAsync(_cts.Token), _cts.Token);
+
+            // Start accepting clients
             _serverTask = Task.Run(async () => await AcceptClientsAsync(_cts.Token), _cts.Token);
         }
 
@@ -60,11 +68,24 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
 
         public void BroadcastMessage(string message)
         {
-            _logger.LogDebug("Broadcasting message: {Message}", message);
+            _logger.LogDebug("Queuing broadcast message: {Message}", message);
 
-            var deadClients = new List<Guid>();
+            // Add message to queue for reliable delivery
+            _messageQueue.Enqueue(new BroadcastMessage
+            {
+                Content = message,
+                Timestamp = DateTime.UtcNow,
+                RetryCount = 0
+            });
+        }
 
-            foreach (var client in _clients.Values)
+        public void BroadcastMessageToFlight(string flightNumber, string message)
+        {
+            _logger.LogDebug("Broadcasting message to flight {FlightNumber}: {Message}", flightNumber, message);
+
+            var flightClients = _clients.Values.Where(c => c.SubscribedFlights.Contains(flightNumber));
+
+            foreach (var client in flightClients)
             {
                 try
                 {
@@ -73,18 +94,69 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Error sending message to client {ClientId}", client.Id);
-                    deadClients.Add(client.Id);
+                }
+            }
+        }
+
+        private async Task ProcessMessageQueueAsync(CancellationToken cancellationToken)
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                try
+                {
+                    if (_messageQueue.TryDequeue(out var message))
+                    {
+                        await DeliverBroadcastMessage(message);
+                    }
+                    else
+                    {
+                        await Task.Delay(100, cancellationToken); // Wait for messages
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error processing message queue");
+                }
+            }
+        }
+
+        private async Task DeliverBroadcastMessage(BroadcastMessage message)
+        {
+            var failedClients = new List<Guid>();
+
+            foreach (var client in _clients.Values)
+            {
+                try
+                {
+                    client.SendMessage(message.Content);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error sending message to client {ClientId}", client.Id);
+                    failedClients.Add(client.Id);
                 }
             }
 
-            // Clean up dead clients
-            foreach (var clientId in deadClients)
+            // Clean up failed clients
+            foreach (var clientId in failedClients)
             {
                 if (_clients.TryRemove(clientId, out var client))
                 {
                     client.Dispose();
-                    _logger.LogInformation("Removed dead client {ClientId}", clientId);
+                    _logger.LogInformation("Removed failed client {ClientId}", clientId);
                 }
+            }
+
+            // Retry logic for important messages
+            if (failedClients.Any() && message.RetryCount < 3)
+            {
+                message.RetryCount++;
+                await Task.Delay(1000); // Wait before retry
+                _messageQueue.Enqueue(message);
             }
         }
 
@@ -94,7 +166,7 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
             {
                 while (!cancellationToken.IsCancellationRequested)
                 {
-                    var tcpClient = await _listener!.AcceptTcpClientAsync(cancellationToken);
+                    var tcpClient = await _listener!.AcceptTcpClientAsync();
                     _logger.LogInformation("New client connected from {RemoteEndPoint}", tcpClient.Client.RemoteEndPoint);
 
                     var clientId = Guid.NewGuid();
@@ -107,7 +179,6 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
             }
             catch (OperationCanceledException)
             {
-                // Expected when cancellation is requested
                 _logger.LogInformation("Server loop was cancelled");
             }
             catch (Exception ex)
@@ -135,12 +206,32 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
                 }
             }
         }
+
+        public int GetConnectedClientsCount()
+        {
+            return _clients.Count;
+        }
+
+        public List<ClientInfo> GetConnectedClients()
+        {
+            return _clients.Values.Select(c => new ClientInfo
+            {
+                Id = c.Id,
+                ConnectedAt = c.ConnectedAt,
+                RemoteEndPoint = c.RemoteEndPoint,
+                SubscribedFlights = c.SubscribedFlights.ToList()
+            }).ToList();
+        }
     }
 
-    // Client connection class to handle individual socket connections
+    // Enhanced client connection class
     internal class ClientConnection : IDisposable
     {
         public Guid Id { get; }
+        public DateTime ConnectedAt { get; }
+        public string RemoteEndPoint { get; }
+        public HashSet<string> SubscribedFlights { get; } = new();
+
         private readonly TcpClient _tcpClient;
         private readonly NetworkStream _stream;
         private readonly ILogger _logger;
@@ -149,6 +240,8 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
         public ClientConnection(Guid id, TcpClient tcpClient, ILogger logger)
         {
             Id = id;
+            ConnectedAt = DateTime.UtcNow;
+            RemoteEndPoint = tcpClient.Client.RemoteEndPoint?.ToString() ?? "Unknown";
             _tcpClient = tcpClient;
             _stream = tcpClient.GetStream();
             _logger = logger;
@@ -160,41 +253,22 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
 
             try
             {
+                // Send welcome message
+                await SendWelcomeMessage();
+
                 while (!cancellationToken.IsCancellationRequested && _tcpClient.Connected)
                 {
                     var bytesRead = await _stream.ReadAsync(buffer, 0, buffer.Length, cancellationToken);
 
                     if (bytesRead == 0)
                     {
-                        // Client disconnected
                         break;
                     }
 
                     var message = Encoding.UTF8.GetString(buffer, 0, bytesRead);
                     _logger.LogDebug("Received message from client {ClientId}: {Message}", Id, message);
 
-                    // Process the message (you could add more complex processing here)
-                    try
-                    {
-                        var socketMessage = JsonSerializer.Deserialize<SocketMessage>(message);
-
-                        // Respond to ping messages
-                        if (socketMessage?.Type == MessageType.Ping)
-                        {
-                            var response = new SocketMessage
-                            {
-                                Type = MessageType.Ping,
-                                Data = "Pong",
-                                Timestamp = DateTime.UtcNow
-                            };
-
-                            SendMessage(JsonSerializer.Serialize(response));
-                        }
-                    }
-                    catch (JsonException ex)
-                    {
-                        _logger.LogWarning(ex, "Failed to parse message from client {ClientId}", Id);
-                    }
+                    await ProcessClientMessage(message);
                 }
             }
             catch (OperationCanceledException)
@@ -211,14 +285,124 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
             }
         }
 
+        private async Task ProcessClientMessage(string message)
+        {
+            try
+            {
+                var socketMessage = JsonSerializer.Deserialize<SocketMessage>(message);
+
+                if (socketMessage == null) return;
+
+                switch (socketMessage.Type)
+                {
+                    case MessageType.Ping:
+                        await SendPongResponse();
+                        break;
+
+                    case MessageType.FlightSubscription:
+                        await HandleFlightSubscription(socketMessage);
+                        break;
+
+                    case MessageType.SeatAssignment:
+                        // Forward seat assignment to other clients
+                        await ForwardSeatAssignment(socketMessage);
+                        break;
+
+                    case MessageType.FlightStatusUpdate:
+                        // Forward flight status update to other clients
+                        await ForwardFlightStatusUpdate(socketMessage);
+                        break;
+                }
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "Failed to parse message from client {ClientId}", Id);
+            }
+        }
+
+        private async Task HandleFlightSubscription(SocketMessage message)
+        {
+            try
+            {
+                if (message.Data is JsonElement element && element.TryGetProperty("flightNumber", out var flightNumberProp))
+                {
+                    var flightNumber = flightNumberProp.GetString();
+                    if (!string.IsNullOrEmpty(flightNumber))
+                    {
+                        SubscribedFlights.Add(flightNumber);
+                        _logger.LogInformation("Client {ClientId} subscribed to flight {FlightNumber}", Id, flightNumber);
+
+                        // Send confirmation
+                        var response = new SocketMessage
+                        {
+                            Type = MessageType.FlightSubscription,
+                            Data = new { success = true, flightNumber = flightNumber },
+                            Timestamp = DateTime.UtcNow
+                        };
+
+                        SendMessage(JsonSerializer.Serialize(response));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error handling flight subscription for client {ClientId}", Id);
+            }
+        }
+
+        private async Task ForwardSeatAssignment(SocketMessage message)
+        {
+            // This would be implemented to forward seat assignments to other terminals
+            // For now, we'll just log it
+            _logger.LogInformation("Forwarding seat assignment from client {ClientId}", Id);
+        }
+
+        private async Task ForwardFlightStatusUpdate(SocketMessage message)
+        {
+            // This would be implemented to forward flight status updates to other terminals
+            _logger.LogInformation("Forwarding flight status update from client {ClientId}", Id);
+        }
+
+        private async Task SendWelcomeMessage()
+        {
+            var welcomeMessage = new SocketMessage
+            {
+                Type = MessageType.System,
+                Data = new { message = "Connected to Flight Management Socket Server", clientId = Id },
+                Timestamp = DateTime.UtcNow
+            };
+
+            SendMessage(JsonSerializer.Serialize(welcomeMessage));
+        }
+
+        private async Task SendPongResponse()
+        {
+            var response = new SocketMessage
+            {
+                Type = MessageType.Ping,
+                Data = "Pong",
+                Timestamp = DateTime.UtcNow
+            };
+
+            SendMessage(JsonSerializer.Serialize(response));
+        }
+
         public void SendMessage(string message)
         {
-            if (!_tcpClient.Connected)
-                throw new InvalidOperationException("Client is not connected");
+            if (!_tcpClient.Connected || _disposed)
+                return;
 
-            var data = Encoding.UTF8.GetBytes(message);
-            _stream.Write(data, 0, data.Length);
-            _stream.Flush();
+            try
+            {
+                var data = Encoding.UTF8.GetBytes(message);
+                _stream.Write(data, 0, data.Length);
+                _stream.Flush();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error sending message to client {ClientId}", Id);
+                throw;
+            }
         }
 
         public void Dispose()
@@ -238,5 +422,41 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
 
             _disposed = true;
         }
+    }
+
+    // Supporting classes
+    public class BroadcastMessage
+    {
+        public string Content { get; set; } = string.Empty;
+        public DateTime Timestamp { get; set; }
+        public int RetryCount { get; set; }
+    }
+
+    public class ClientInfo
+    {
+        public Guid Id { get; set; }
+        public DateTime ConnectedAt { get; set; }
+        public string RemoteEndPoint { get; set; } = string.Empty;
+        public List<string> SubscribedFlights { get; set; } = new();
+    }
+
+    // Extended message types
+    public enum MessageType
+    {
+        FlightStatusUpdate,
+        SeatAssignment,
+        CheckInComplete,
+        Error,
+        Ping,
+        FlightSubscription,
+        System,
+        SeatLock
+    }
+
+    public class SocketMessage
+    {
+        public MessageType Type { get; set; }
+        public object Data { get; set; } = null!;
+        public DateTime Timestamp { get; set; } = DateTime.UtcNow;
     }
 }

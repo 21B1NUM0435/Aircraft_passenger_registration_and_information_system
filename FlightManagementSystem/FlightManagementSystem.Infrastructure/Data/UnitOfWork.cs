@@ -1,10 +1,8 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
 using FlightManagementSystem.Core.Interfaces;
-using FlightManagementSystem.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace FlightManagementSystem.Infrastructure.Data
 {
@@ -23,6 +21,12 @@ namespace FlightManagementSystem.Infrastructure.Data
             return await _context.SaveChangesAsync();
         }
 
+        public async Task<IUnitOfWorkTransaction> BeginTransactionAsync()
+        {
+            var transaction = await _context.Database.BeginTransactionAsync();
+            return new UnitOfWorkTransaction(transaction);
+        }
+
         public void Dispose()
         {
             Dispose(true);
@@ -36,6 +40,36 @@ namespace FlightManagementSystem.Infrastructure.Data
                 _context.Dispose();
             }
             _disposed = true;
+        }
+    }
+
+    internal class UnitOfWorkTransaction : IUnitOfWorkTransaction
+    {
+        private readonly IDbContextTransaction _transaction;
+        private bool _disposed;
+
+        public UnitOfWorkTransaction(IDbContextTransaction transaction)
+        {
+            _transaction = transaction;
+        }
+
+        public async Task CommitAsync()
+        {
+            await _transaction.CommitAsync();
+        }
+
+        public async Task RollbackAsync()
+        {
+            await _transaction.RollbackAsync();
+        }
+
+        public void Dispose()
+        {
+            if (!_disposed)
+            {
+                _transaction?.Dispose();
+                _disposed = true;
+            }
         }
     }
 }
