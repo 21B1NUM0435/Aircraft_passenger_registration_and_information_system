@@ -215,6 +215,8 @@ namespace FlightManagementSystem.Web.Controllers.Api
 
         private async Task BroadcastSeatLock(string seatId, string flightNumber, bool isLocked)
         {
+            Console.WriteLine($"Broadcasting seat lock: {seatId} = {isLocked} for flight {flightNumber}");
+
             var message = System.Text.Json.JsonSerializer.Serialize(new
             {
                 type = "SeatLock",
@@ -227,19 +229,30 @@ namespace FlightManagementSystem.Web.Controllers.Api
                 }
             });
 
+            Console.WriteLine($"Seat lock message: {message}");
+
             // Broadcast to Windows applications via Socket Server
             _socketServer.BroadcastMessage(message);
 
             // Broadcast to Web clients via SignalR Hub (if available)
             if (_flightHubService != null)
             {
-                await _flightHubService.NotifySeatAssigned(flightNumber, seatId, isLocked);
+                try
+                {
+                    await _flightHubService.NotifySeatAssigned(flightNumber, seatId, isLocked);
+                    Console.WriteLine("SignalR seat lock notification sent");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"SignalR seat lock notification failed: {ex.Message}");
+                }
             }
         }
 
-        private async Task BroadcastCheckInComplete(string flightNumber, string bookingReference,
-            string passengerName, string seatId)
+        private async Task BroadcastCheckInComplete(string flightNumber, string bookingReference, string passengerName, string seatId)
         {
+            Console.WriteLine($"Broadcasting check-in complete for seat {seatId} on flight {flightNumber}");
+
             // Broadcast seat assignment to Socket Server
             var seatMessage = System.Text.Json.JsonSerializer.Serialize(new
             {
@@ -253,6 +266,8 @@ namespace FlightManagementSystem.Web.Controllers.Api
                     timestamp = DateTime.UtcNow
                 }
             });
+
+            Console.WriteLine($"Socket message: {seatMessage}");
             _socketServer.BroadcastMessage(seatMessage);
 
             // Broadcast check-in complete
@@ -268,13 +283,27 @@ namespace FlightManagementSystem.Web.Controllers.Api
                     timestamp = DateTime.UtcNow
                 }
             });
+
+            Console.WriteLine($"Check-in message: {checkInMessage}");
             _socketServer.BroadcastMessage(checkInMessage);
 
             // SignalR notifications to web clients
             if (_flightHubService != null)
             {
-                await _flightHubService.NotifySeatAssigned(flightNumber, seatId, true);
-                await _flightHubService.NotifyPassengerCheckedIn(flightNumber, passengerName);
+                try
+                {
+                    await _flightHubService.NotifySeatAssigned(flightNumber, seatId, true);
+                    await _flightHubService.NotifyPassengerCheckedIn(flightNumber, passengerName);
+                    Console.WriteLine("SignalR notifications sent successfully");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"SignalR notification failed: {ex.Message}");
+                }
+            }
+            else
+            {
+                Console.WriteLine("FlightHubService is null - no SignalR notifications sent");
             }
         }
     }

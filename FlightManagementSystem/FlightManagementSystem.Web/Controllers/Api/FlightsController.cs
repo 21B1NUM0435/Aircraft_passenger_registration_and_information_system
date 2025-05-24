@@ -11,16 +11,19 @@ namespace FlightManagementSystem.Web.Controllers.Api
     {
         private readonly IFlightService _flightService;
         private readonly ISocketServer _socketServer;
+        private readonly IFlightHubService? _flightHubService;
         private readonly ILogger<FlightsController> _logger;
 
         public FlightsController(
             IFlightService flightService,
             ISocketServer socketServer,
-            ILogger<FlightsController> logger)
+            ILogger<FlightsController> logger,
+            IFlightHubService? flightHubService = null)
         {
             _flightService = flightService;
             _socketServer = socketServer;
             _logger = logger;
+            _flightHubService = flightHubService;
         }
 
         // GET: api/flights
@@ -118,20 +121,54 @@ namespace FlightManagementSystem.Web.Controllers.Api
                 return BadRequest("Failed to update flight status");
             }
 
-            // Broadcast flight status update to connected clients
-            _socketServer.BroadcastMessage(System.Text.Json.JsonSerializer.Serialize(new
+            // Broadcast to Socket Server (Windows apps)
+            BroadcastToSocketServer(flightNumber, newStatus);
+
+            // Broadcast to SignalR Hub (Web clients)
+            if (_flightHubService != null)
             {
-                type = "FlightStatusUpdate",
-                data = new
+                try
                 {
-                    flightNumber,
-                    newStatus = newStatus.ToString()
-                },
-                timestamp = DateTime.UtcNow
-            }));
+                    await _flightHubService.NotifyFlightStatusChanged(flightNumber, newStatus);
+                    _logger.LogInformation("Successfully broadcasted flight status change via SignalR for flight {FlightNumber}", flightNumber);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to broadcast via SignalR for flight {FlightNumber}", flightNumber);
+                }
+            }
+            else
+            {
+                _logger.LogWarning("FlightHubService is not available - SignalR broadcast skipped");
+            }
 
             _logger.LogInformation("Flight {FlightNumber} status updated to {Status}", flightNumber, newStatus);
             return Ok(new { status = "Flight status updated successfully" });
+        }
+
+        private void BroadcastToSocketServer(string flightNumber, FlightStatus newStatus)
+        {
+            try
+            {
+                var message = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    type = "FlightStatusUpdate",
+                    data = new
+                    {
+                        flightNumber,
+                        newStatus = newStatus.ToString(),
+                        timestamp = DateTime.UtcNow
+                    },
+                    timestamp = DateTime.UtcNow
+                });
+
+                _socketServer.BroadcastMessage(message);
+                _logger.LogInformation("Successfully broadcasted flight status change via Socket Server for flight {FlightNumber}", flightNumber);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to broadcast via Socket Server for flight {FlightNumber}", flightNumber);
+            }
         }
     }
 }

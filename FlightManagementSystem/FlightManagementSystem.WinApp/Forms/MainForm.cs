@@ -316,7 +316,7 @@ namespace FlightManagementSystem.WinApp.Forms
                 selectedFlight.FlightNumber == flightNumber)
             {
                 // Remove seat from available seats and update UI
-                this.Invoke((MethodInvoker)delegate
+                await this.InvokeAsync(new Action(() =>
                 {
                     var seatToRemove = _availableSeats.FirstOrDefault(s => s.SeatId == seatId);
                     if (seatToRemove != null)
@@ -341,13 +341,13 @@ namespace FlightManagementSystem.WinApp.Forms
                             btnCheckIn.Enabled = false;
                         }
                     }
-                });
+                }));
             }
         }
 
-        private void OnFlightStatusChangedFromSocket(string flightNumber, string newStatus)
+        private async void OnFlightStatusChangedFromSocket(string flightNumber, string newStatus)
         {
-            this.Invoke((MethodInvoker)delegate
+            await this.InvokeAsync(new Action(() =>
             {
                 var flight = _flights.FirstOrDefault(f => f.FlightNumber == flightNumber);
                 if (flight != null)
@@ -360,26 +360,51 @@ namespace FlightManagementSystem.WinApp.Forms
                         UpdateFlightStatusUI(newStatus);
                     }
                 }
-            });
+            }));
         }
 
         private async void MainForm_Load(object sender, EventArgs e)
         {
             await LoadFlightsAsync();
 
-            // Initialize socket client here to avoid issues
+            // Initialize socket client
             try
             {
                 _socketClient = new SocketClient("localhost", 5000);
                 _socketClient.OnSeatReserved += OnSeatReservedFromSocket;
                 _socketClient.OnFlightStatusChanged += OnFlightStatusChangedFromSocket;
-                await _socketClient.ConnectAsync();
+                _socketClient.OnConnectionStatusChanged += (status) =>
+                {
+                    this.Invoke(new Action(() =>
+                    {
+                        // Update UI to show connection status if needed
+                        Console.WriteLine($"Socket connection status: {status}");
+                    }));
+                };
+
+                var connected = await _socketClient.ConnectAsync();
+                if (!connected)
+                {
+                    MessageBox.Show("Could not connect to socket server. Real-time updates may not work.",
+                        "Connection Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
             }
             catch (Exception ex)
             {
-                // Log error but don't crash the application
                 MessageBox.Show($"Could not connect to socket server: {ex.Message}", "Connection Warning",
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        private async Task InvokeAsync(Action action)
+        {
+            if (InvokeRequired)
+            {
+                Invoke(action);
+            }
+            else
+            {
+                action();
             }
         }
 
@@ -672,8 +697,8 @@ namespace FlightManagementSystem.WinApp.Forms
                     selectedFlight.Status = newStatus;
                     UpdateFlightStatusUI(newStatus);
 
-                    // Notify other terminals via socket
-                    await _socketClient.NotifyFlightStatusChangedAsync(selectedFlight.FlightNumber, newStatus);
+                    // The socket notification will be sent by the server automatically
+                    // No need to manually notify here - it's handled in the API controller
                 }
                 else
                 {
@@ -747,6 +772,9 @@ namespace FlightManagementSystem.WinApp.Forms
                 _socketClient.Dispose();
             }
         }
+
+        /*Debug*/
+
 
         // Updated Designer-generated code with new controls
         private void InitializeComponent()

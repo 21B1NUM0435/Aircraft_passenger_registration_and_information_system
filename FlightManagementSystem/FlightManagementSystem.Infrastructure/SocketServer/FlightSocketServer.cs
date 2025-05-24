@@ -19,7 +19,7 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
         private readonly int _port;
         private TcpListener? _listener;
         private CancellationTokenSource? _cts;
-        private readonly ConcurrentDictionary<Guid, ClientConnection> _clients = new();
+        public readonly ConcurrentDictionary<Guid, ClientConnection> _clients = new();
         private Task? _serverTask;
 
         // Message queue for reliable delivery
@@ -68,7 +68,7 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
 
         public void BroadcastMessage(string message)
         {
-            _logger.LogDebug("Queuing broadcast message: {Message}", message);
+            Console.WriteLine($"Broadcasting message: {message}");
 
             // Add message to queue for reliable delivery
             _messageQueue.Enqueue(new BroadcastMessage
@@ -289,9 +289,12 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
         {
             try
             {
-                var socketMessage = JsonSerializer.Deserialize<SocketMessage>(message);
+                Console.WriteLine($"Raw message received: {message}");
 
+                var socketMessage = JsonSerializer.Deserialize<SocketMessage>(message);
                 if (socketMessage == null) return;
+
+                Console.WriteLine($"Parsed message type: {socketMessage.Type}");
 
                 switch (socketMessage.Type)
                 {
@@ -305,18 +308,67 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
 
                     case MessageType.SeatAssignment:
                         // Forward seat assignment to other clients
-                        await ForwardSeatAssignment(socketMessage);
+                        await ForwardMessage(socketMessage, "SeatAssignment");
                         break;
 
                     case MessageType.FlightStatusUpdate:
                         // Forward flight status update to other clients
-                        await ForwardFlightStatusUpdate(socketMessage);
+                        await ForwardMessage(socketMessage, "FlightStatusUpdate");
+                        break;
+
+                    case MessageType.SeatLock:
+                        // Forward seat lock to other clients
+                        await ForwardMessage(socketMessage, "SeatLock");
                         break;
                 }
             }
             catch (JsonException ex)
             {
-                _logger.LogWarning(ex, "Failed to parse message from client {ClientId}", Id);
+                Console.WriteLine($"Failed to parse message: {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error processing message: {ex.Message}");
+            }
+        }
+
+        private async Task ForwardMessage(SocketMessage message, string messageType)
+        {
+            try
+            {
+                var json = JsonSerializer.Serialize(message);
+                Console.WriteLine($"Forwarding {messageType} message to all clients");
+
+                // Broadcast to all connected clients except the sender
+                var failedClients = new List<Guid>();
+
+                foreach (var client in _clients.Values.Where(c => c.Id != Id)) // Don't send back to sender
+                {
+                    try
+                    {
+                        client.SendMessage(json);
+                        Console.WriteLine($"Sent {messageType} to client {client.Id}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Failed to send {messageType} to client {client.Id}: {ex.Message}");
+                        failedClients.Add(client.Id);
+                    }
+                }
+
+                // Clean up failed clients
+                foreach (var clientId in failedClients)
+                {
+                    if (_clients.TryRemove(clientId, out var client))
+                    {
+                        client.Dispose();
+                        Console.WriteLine($"Removed failed client {clientId}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error forwarding {messageType} message: {ex.Message}");
             }
         }
 

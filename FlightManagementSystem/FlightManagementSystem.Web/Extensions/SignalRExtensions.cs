@@ -10,8 +10,8 @@ namespace FlightManagementSystem.Web.Extensions
             // Add SignalR
             services.AddSignalR();
 
-            // Register the hub service - make it optional since it might not be needed for simple flight display
-            services.AddScoped<IFlightHubService, FlightHubService>();
+            // Register the hub service as SINGLETON for proper broadcasting
+            services.AddSingleton<IFlightHubService, FlightHubService>();
 
             return services;
         }
