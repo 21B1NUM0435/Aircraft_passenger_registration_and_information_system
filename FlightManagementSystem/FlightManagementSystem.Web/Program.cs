@@ -1,14 +1,17 @@
-using FlightManagementSystem.Core.Interfaces;
+﻿using FlightManagementSystem.Core.Interfaces;
 using FlightManagementSystem.Infrastructure;
 using FlightManagementSystem.Infrastructure.Data;
 using FlightManagementSystem.Infrastructure.SocketServer;
 using FlightManagementSystem.Web.Extensions;
 using FlightManagementSystem.Web.Hubs;
+using Microsoft.AspNetCore.Http.Json;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container
+// ===== ALL SERVICE REGISTRATIONS BEFORE builder.Build() =====
+
 // Configure SQLite connection
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ??
                         "Data Source=flightmanagement.db";
@@ -25,6 +28,19 @@ builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+
+// Configure JSON serialization options for security (BEFORE builder.Build())
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.PropertyNameCaseInsensitive = true;
+    options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+});
+
+builder.Services.Configure<JsonOptions>(options =>
+{
+    options.SerializerOptions.PropertyNameCaseInsensitive = true;
+    options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+});
 
 // Add Blazor components with anti-forgery
 builder.Services.AddRazorComponents()
@@ -57,14 +73,19 @@ builder.Services.AddSignalRServices();
 // Add hosted service to start Socket Server
 builder.Services.AddHostedService<SocketServerHostedService>();
 
-// Add logging
-builder.Services.AddLogging(builder =>
+// Add logging with more detailed output (BEFORE builder.Build())
+builder.Services.AddLogging(logging =>
 {
-    builder.AddConsole();
-    builder.AddDebug();
+    logging.ClearProviders();
+    logging.AddConsole();
+    logging.AddDebug();
+    logging.SetMinimumLevel(LogLevel.Debug);
 });
 
+// ===== BUILD THE APPLICATION (After all service registrations) =====
 var app = builder.Build();
+
+// ===== POST-BUILD CONFIGURATION AND MIDDLEWARE =====
 
 // Configure the HTTP request pipeline
 if (app.Environment.IsDevelopment())
@@ -99,24 +120,7 @@ app.MapHub<FlightHub>("/flighthub");
 app.MapRazorComponents<FlightManagementSystem.Web.Components.App>()
     .AddInteractiveServerRenderMode();
 
-// Initialize the database
-try
-{
-    await DatabaseInitializer.InitializeDatabaseAsync(app.Services);
-    app.Logger.LogInformation("Database initialized successfully");
-}
-catch (Exception ex)
-{
-    app.Logger.LogError(ex, "An error occurred while initializing the database");
-}
-
-builder.Services.AddLogging(logging =>
-{
-    logging.ClearProviders();
-    logging.AddConsole();
-    logging.AddDebug();
-    logging.SetMinimumLevel(LogLevel.Debug);
-});
+// ===== STARTUP LOGGING AND DIAGNOSTICS =====
 app.Logger.LogInformation("=== APPLICATION STARTUP ===");
 app.Logger.LogInformation("Socket Server Port: {Port}", builder.Configuration.GetValue<int>("SocketServer:Port", 5000));
 
@@ -124,25 +128,36 @@ app.Logger.LogInformation("Socket Server Port: {Port}", builder.Configuration.Ge
 var hubService = app.Services.GetService<IFlightHubService>();
 if (hubService != null)
 {
-    app.Logger.LogInformation("FlightHubService registered successfully");
+    app.Logger.LogInformation("✅ FlightHubService registered successfully");
 }
 else
 {
-    app.Logger.LogError("FlightHubService NOT registered - SignalR will not work!");
+    app.Logger.LogError("❌ FlightHubService NOT registered - SignalR will not work!");
 }
 
 // Test Socket Server registration
 var socketServer = app.Services.GetService<ISocketServer>();
 if (socketServer != null)
 {
-    app.Logger.LogInformation("Socket Server registered successfully");
+    app.Logger.LogInformation("✅ Socket Server registered successfully");
 }
 else
 {
-    app.Logger.LogError("Socket Server NOT registered!");
+    app.Logger.LogError("❌ Socket Server NOT registered!");
 }
 
-app.Logger.LogInformation("Application starting...");
+// Initialize the database
+try
+{
+    await DatabaseInitializer.InitializeDatabaseAsync(app.Services);
+    app.Logger.LogInformation("✅ Database initialized successfully");
+}
+catch (Exception ex)
+{
+    app.Logger.LogError(ex, "❌ An error occurred while initializing the database");
+}
+
+app.Logger.LogInformation("🚀 Application starting...");
 app.Run();
 
 // SocketServerHostedService - Define in the same file to avoid namespace issues
@@ -159,29 +174,29 @@ public class SocketServerHostedService : IHostedService
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Starting Socket Server");
+        _logger.LogInformation("🔌 Starting Socket Server");
         try
         {
             await _socketServer.StartAsync(cancellationToken);
-            _logger.LogInformation("Socket Server started successfully");
+            _logger.LogInformation("✅ Socket Server started successfully");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to start Socket Server");
+            _logger.LogError(ex, "❌ Failed to start Socket Server");
         }
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Stopping Socket Server");
+        _logger.LogInformation("🔌 Stopping Socket Server");
         try
         {
             await _socketServer.StopAsync();
-            _logger.LogInformation("Socket Server stopped successfully");
+            _logger.LogInformation("✅ Socket Server stopped successfully");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to stop Socket Server");
+            _logger.LogError(ex, "❌ Failed to stop Socket Server");
         }
     }
 }

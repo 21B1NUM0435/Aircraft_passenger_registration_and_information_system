@@ -19,7 +19,9 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
         private readonly int _port;
         private TcpListener? _listener;
         private CancellationTokenSource? _cts;
-        public readonly ConcurrentDictionary<Guid, ClientConnection> _clients = new();
+
+        // Make clients field private and ClientConnection public
+        private readonly ConcurrentDictionary<Guid, ClientConnection> _clients = new();
         private Task? _serverTask;
 
         // Message queue for reliable delivery
@@ -68,7 +70,7 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
 
         public void BroadcastMessage(string message)
         {
-            Console.WriteLine($"Broadcasting message: {message}");
+            Console.WriteLine($"Broadcasting message to {_clients.Count} clients: {message}");
 
             // Add message to queue for reliable delivery
             _messageQueue.Enqueue(new BroadcastMessage
@@ -77,25 +79,6 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
                 Timestamp = DateTime.UtcNow,
                 RetryCount = 0
             });
-        }
-
-        public void BroadcastMessageToFlight(string flightNumber, string message)
-        {
-            _logger.LogDebug("Broadcasting message to flight {FlightNumber}: {Message}", flightNumber, message);
-
-            var flightClients = _clients.Values.Where(c => c.SubscribedFlights.Contains(flightNumber));
-
-            foreach (var client in flightClients)
-            {
-                try
-                {
-                    client.SendMessage(message);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error sending message to client {ClientId}", client.Id);
-                }
-            }
         }
 
         private async Task ProcessMessageQueueAsync(CancellationToken cancellationToken)
@@ -110,7 +93,7 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
                     }
                     else
                     {
-                        await Task.Delay(100, cancellationToken); // Wait for messages
+                        await Task.Delay(100, cancellationToken);
                     }
                 }
                 catch (OperationCanceledException)
@@ -127,19 +110,24 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
         private async Task DeliverBroadcastMessage(BroadcastMessage message)
         {
             var failedClients = new List<Guid>();
+            var successCount = 0;
 
             foreach (var client in _clients.Values)
             {
                 try
                 {
                     client.SendMessage(message.Content);
+                    successCount++;
+                    Console.WriteLine($"Message delivered to client {client.Id}");
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error sending message to client {ClientId}", client.Id);
+                    Console.WriteLine($"Error sending message to client {client.Id}: {ex.Message}");
                     failedClients.Add(client.Id);
                 }
             }
+
+            Console.WriteLine($"Message delivered to {successCount}/{_clients.Count} clients");
 
             // Clean up failed clients
             foreach (var clientId in failedClients)
@@ -147,7 +135,7 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
                 if (_clients.TryRemove(clientId, out var client))
                 {
                     client.Dispose();
-                    _logger.LogInformation("Removed failed client {ClientId}", clientId);
+                    Console.WriteLine($"Removed failed client {clientId}");
                 }
             }
 
@@ -155,7 +143,8 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
             if (failedClients.Any() && message.RetryCount < 3)
             {
                 message.RetryCount++;
-                await Task.Delay(1000); // Wait before retry
+                Console.WriteLine($"Retrying message delivery (attempt {message.RetryCount})");
+                await Task.Delay(1000);
                 _messageQueue.Enqueue(message);
             }
         }
@@ -170,7 +159,7 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
                     _logger.LogInformation("New client connected from {RemoteEndPoint}", tcpClient.Client.RemoteEndPoint);
 
                     var clientId = Guid.NewGuid();
-                    var clientConnection = new ClientConnection(clientId, tcpClient, _logger);
+                    var clientConnection = new ClientConnection(clientId, tcpClient, _logger, _clients);
                     _clients.TryAdd(clientId, clientConnection);
 
                     // Start a task to handle this client
@@ -224,8 +213,8 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
         }
     }
 
-    // Enhanced client connection class
-    internal class ClientConnection : IDisposable
+    // Make ClientConnection public to fix accessibility error
+    public class ClientConnection : IDisposable
     {
         public Guid Id { get; }
         public DateTime ConnectedAt { get; }
@@ -235,9 +224,10 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
         private readonly TcpClient _tcpClient;
         private readonly NetworkStream _stream;
         private readonly ILogger _logger;
+        private readonly ConcurrentDictionary<Guid, ClientConnection> _allClients;
         private bool _disposed = false;
 
-        public ClientConnection(Guid id, TcpClient tcpClient, ILogger logger)
+        public ClientConnection(Guid id, TcpClient tcpClient, ILogger logger, ConcurrentDictionary<Guid, ClientConnection> allClients)
         {
             Id = id;
             ConnectedAt = DateTime.UtcNow;
@@ -245,6 +235,7 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
             _tcpClient = tcpClient;
             _stream = tcpClient.GetStream();
             _logger = logger;
+            _allClients = allClients;
         }
 
         public async Task HandleCommunicationAsync(CancellationToken cancellationToken)
@@ -253,8 +244,8 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
 
             try
             {
-                // Send welcome message
-                await SendWelcomeMessage();
+                // Send welcome message (no await needed since it's void)
+                SendWelcomeMessage();
 
                 while (!cancellationToken.IsCancellationRequested && _tcpClient.Connected)
                 {
@@ -268,7 +259,7 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
                     var message = Encoding.UTF8.GetString(buffer, 0, bytesRead);
                     _logger.LogDebug("Received message from client {ClientId}: {Message}", Id, message);
 
-                    await ProcessClientMessage(message);
+                    ProcessClientMessage(message); // No await needed
                 }
             }
             catch (OperationCanceledException)
@@ -285,7 +276,7 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
             }
         }
 
-        private async Task ProcessClientMessage(string message)
+        private void ProcessClientMessage(string message)
         {
             try
             {
@@ -299,26 +290,18 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
                 switch (socketMessage.Type)
                 {
                     case MessageType.Ping:
-                        await SendPongResponse();
+                        SendPongResponse();
                         break;
 
                     case MessageType.FlightSubscription:
-                        await HandleFlightSubscription(socketMessage);
+                        HandleFlightSubscription(socketMessage);
                         break;
 
                     case MessageType.SeatAssignment:
-                        // Forward seat assignment to other clients
-                        await ForwardMessage(socketMessage, "SeatAssignment");
-                        break;
-
                     case MessageType.FlightStatusUpdate:
-                        // Forward flight status update to other clients
-                        await ForwardMessage(socketMessage, "FlightStatusUpdate");
-                        break;
-
                     case MessageType.SeatLock:
-                        // Forward seat lock to other clients
-                        await ForwardMessage(socketMessage, "SeatLock");
+                        // Forward to other clients
+                        ForwardMessageToOtherClients(socketMessage);
                         break;
                 }
             }
@@ -332,26 +315,26 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
             }
         }
 
-        private async Task ForwardMessage(SocketMessage message, string messageType)
+        private void ForwardMessageToOtherClients(SocketMessage message)
         {
             try
             {
                 var json = JsonSerializer.Serialize(message);
-                Console.WriteLine($"Forwarding {messageType} message to all clients");
+                Console.WriteLine($"Forwarding message type {message.Type} to other clients");
 
-                // Broadcast to all connected clients except the sender
                 var failedClients = new List<Guid>();
 
-                foreach (var client in _clients.Values.Where(c => c.Id != Id)) // Don't send back to sender
+                // Send to all other clients (not this one)
+                foreach (var client in _allClients.Values.Where(c => c.Id != this.Id))
                 {
                     try
                     {
                         client.SendMessage(json);
-                        Console.WriteLine($"Sent {messageType} to client {client.Id}");
+                        Console.WriteLine($"Forwarded message to client {client.Id}");
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"Failed to send {messageType} to client {client.Id}: {ex.Message}");
+                        Console.WriteLine($"Failed to forward message to client {client.Id}: {ex.Message}");
                         failedClients.Add(client.Id);
                     }
                 }
@@ -359,7 +342,7 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
                 // Clean up failed clients
                 foreach (var clientId in failedClients)
                 {
-                    if (_clients.TryRemove(clientId, out var client))
+                    if (_allClients.TryRemove(clientId, out var client))
                     {
                         client.Dispose();
                         Console.WriteLine($"Removed failed client {clientId}");
@@ -368,11 +351,11 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error forwarding {messageType} message: {ex.Message}");
+                Console.WriteLine($"Error forwarding message: {ex.Message}");
             }
         }
 
-        private async Task HandleFlightSubscription(SocketMessage message)
+        private void HandleFlightSubscription(SocketMessage message)
         {
             try
             {
@@ -387,7 +370,7 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
                         // Send confirmation
                         var response = new SocketMessage
                         {
-                            Type = MessageType.FlightSubscription,
+                            Type = MessageType.System,
                             Data = new { success = true, flightNumber = flightNumber },
                             Timestamp = DateTime.UtcNow
                         };
@@ -402,20 +385,7 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
             }
         }
 
-        private async Task ForwardSeatAssignment(SocketMessage message)
-        {
-            // This would be implemented to forward seat assignments to other terminals
-            // For now, we'll just log it
-            _logger.LogInformation("Forwarding seat assignment from client {ClientId}", Id);
-        }
-
-        private async Task ForwardFlightStatusUpdate(SocketMessage message)
-        {
-            // This would be implemented to forward flight status updates to other terminals
-            _logger.LogInformation("Forwarding flight status update from client {ClientId}", Id);
-        }
-
-        private async Task SendWelcomeMessage()
+        private void SendWelcomeMessage()
         {
             var welcomeMessage = new SocketMessage
             {
@@ -427,7 +397,7 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
             SendMessage(JsonSerializer.Serialize(welcomeMessage));
         }
 
-        private async Task SendPongResponse()
+        private void SendPongResponse()
         {
             var response = new SocketMessage
             {
@@ -490,25 +460,5 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
         public DateTime ConnectedAt { get; set; }
         public string RemoteEndPoint { get; set; } = string.Empty;
         public List<string> SubscribedFlights { get; set; } = new();
-    }
-
-    // Extended message types
-    public enum MessageType
-    {
-        FlightStatusUpdate,
-        SeatAssignment,
-        CheckInComplete,
-        Error,
-        Ping,
-        FlightSubscription,
-        System,
-        SeatLock
-    }
-
-    public class SocketMessage
-    {
-        public MessageType Type { get; set; }
-        public object Data { get; set; } = null!;
-        public DateTime Timestamp { get; set; } = DateTime.UtcNow;
     }
 }
