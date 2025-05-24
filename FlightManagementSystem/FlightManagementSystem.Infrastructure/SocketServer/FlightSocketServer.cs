@@ -1,34 +1,32 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Net;
-using System.Net.Sockets;
+using System.Net.WebSockets;
+using System.Text;
 using System.Text.Json;
 using FlightManagementSystem.Core.Interfaces;
 using FlightManagementSystem.Core.Models;
 using Microsoft.Extensions.Logging;
 
-namespace FlightManagementSystem.Infrastructure.SocketServer
+namespace FlightManagementSystem.Infrastructure.WebSocketServer
 {
-    public class FlightSocketServer : ISocketServer
+    public class FlightWebSocketServer : ISocketServer
     {
-        private readonly ILogger<FlightSocketServer> _logger;
+        private readonly ILogger<FlightWebSocketServer> _logger;
         private readonly int _port;
-        private TcpListener? _listener;
-        private CancellationTokenSource? _cts;
-
-        // Make clients field private and ClientConnection public
-        private readonly ConcurrentDictionary<Guid, ClientConnection> _clients = new();
+        private readonly ConcurrentDictionary<Guid, WebSocketConnection> _connections = new();
+        private HttpListener? _httpListener;
+        private CancellationTokenSource? _cancellationTokenSource;
         private Task? _serverTask;
 
         // Message queue for reliable delivery
         private readonly ConcurrentQueue<BroadcastMessage> _messageQueue = new();
         private Task? _messageProcessorTask;
 
-        public FlightSocketServer(ILogger<FlightSocketServer> logger, int port = 5000)
+        // Statistics
+        private long _totalMessagesSent = 0;
+        private long _totalClientsConnected = 0;
+
+        public FlightWebSocketServer(ILogger<FlightWebSocketServer> logger, int port = 8080)
         {
             _logger = logger;
             _port = port;
@@ -36,53 +34,64 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
 
         public async Task StartAsync(CancellationToken cancellationToken = default)
         {
-            _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            _cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
-            _listener = new TcpListener(IPAddress.Any, _port);
-            _listener.Start();
+            _httpListener = new HttpListener();
+            _httpListener.Prefixes.Add($"http://localhost:{_port}/");
+            _httpListener.Start();
 
-            _logger.LogInformation("Socket server started on port {Port}", _port);
+            _logger.LogInformation("🚀 WebSocket server started on ws://localhost:{Port}", _port);
+            Console.WriteLine($"🌐 WebSocket Server running on ws://localhost:{_port}");
 
             // Start message processor
-            _messageProcessorTask = Task.Run(async () => await ProcessMessageQueueAsync(_cts.Token), _cts.Token);
+            _messageProcessorTask = Task.Run(async () => await ProcessMessageQueueAsync(_cancellationTokenSource.Token));
 
-            // Start accepting clients
-            _serverTask = Task.Run(async () => await AcceptClientsAsync(_cts.Token), _cts.Token);
+            // Start accepting connections
+            _serverTask = Task.Run(async () => await AcceptWebSocketsAsync(_cancellationTokenSource.Token));
         }
 
         public Task StopAsync()
         {
-            _logger.LogInformation("Stopping socket server");
+            _logger.LogInformation("🛑 Stopping WebSocket server");
 
-            _cts?.Cancel();
-            _listener?.Stop();
+            _cancellationTokenSource?.Cancel();
+            _httpListener?.Stop();
 
-            // Dispose all client connections
-            foreach (var client in _clients.Values)
+            // Dispose all connections
+            foreach (var connection in _connections.Values)
             {
-                client.Dispose();
+                connection.Dispose();
             }
+            _connections.Clear();
 
-            _clients.Clear();
+            _logger.LogInformation("✅ WebSocket server stopped. Stats: {TotalClients} clients served, {TotalMessages} messages sent",
+                _totalClientsConnected, _totalMessagesSent);
 
             return Task.CompletedTask;
         }
 
         public void BroadcastMessage(string message)
         {
-            Console.WriteLine($"Broadcasting message to {_clients.Count} clients: {message}");
+            var timestamp = DateTime.UtcNow;
+            _logger.LogInformation("📡 Broadcasting WebSocket message to {ClientCount} clients at {Timestamp}",
+                _connections.Count, timestamp.ToString("HH:mm:ss.fff"));
+
+            Console.WriteLine($"📡 WEBSOCKET BROADCAST: {message}");
 
             // Add message to queue for reliable delivery
             _messageQueue.Enqueue(new BroadcastMessage
             {
                 Content = message,
-                Timestamp = DateTime.UtcNow,
-                RetryCount = 0
+                Timestamp = timestamp,
+                RetryCount = 0,
+                Priority = GetMessagePriority(message)
             });
         }
 
         private async Task ProcessMessageQueueAsync(CancellationToken cancellationToken)
         {
+            _logger.LogInformation("🔄 WebSocket message processor started");
+
             while (!cancellationToken.IsCancellationRequested)
             {
                 try
@@ -93,7 +102,7 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
                     }
                     else
                     {
-                        await Task.Delay(100, cancellationToken);
+                        await Task.Delay(50, cancellationToken);
                     }
                 }
                 catch (OperationCanceledException)
@@ -102,260 +111,379 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error processing message queue");
+                    _logger.LogError(ex, "❌ Error processing WebSocket message queue");
                 }
             }
         }
 
         private async Task DeliverBroadcastMessage(BroadcastMessage message)
         {
-            var failedClients = new List<Guid>();
+            var deliveryStart = DateTime.UtcNow;
+            var failedConnections = new List<Guid>();
             var successCount = 0;
+            var connectionCount = _connections.Count;
 
-            foreach (var client in _clients.Values)
+            if (connectionCount == 0)
+            {
+                _logger.LogWarning("⚠️ No WebSocket clients connected - message not delivered");
+                return;
+            }
+
+            // Parallel delivery for better performance
+            var deliveryTasks = _connections.Values.Select(async connection =>
             {
                 try
                 {
-                    client.SendMessage(message.Content);
-                    successCount++;
-                    Console.WriteLine($"Message delivered to client {client.Id}");
+                    await connection.SendAsync(message.Content);
+                    return new { ConnectionId = connection.Id, Success = true, Error = (Exception?)null };
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Error sending message to client {client.Id}: {ex.Message}");
-                    failedClients.Add(client.Id);
+                    return new { ConnectionId = connection.Id, Success = false, Error = ex };
                 }
-            }
+            });
 
-            Console.WriteLine($"Message delivered to {successCount}/{_clients.Count} clients");
+            var results = await Task.WhenAll(deliveryTasks);
 
-            // Clean up failed clients
-            foreach (var clientId in failedClients)
+            foreach (var result in results)
             {
-                if (_clients.TryRemove(clientId, out var client))
+                if (result.Success)
                 {
-                    client.Dispose();
-                    Console.WriteLine($"Removed failed client {clientId}");
+                    successCount++;
+                    _totalMessagesSent++;
+                }
+                else
+                {
+                    failedConnections.Add(result.ConnectionId);
+                    _logger.LogWarning("❌ Failed to deliver to connection {ConnectionId}: {Error}",
+                        result.ConnectionId, result.Error?.Message);
                 }
             }
+
+            var deliveryTime = (DateTime.UtcNow - deliveryStart).TotalMilliseconds;
+            _logger.LogInformation("✅ WebSocket message delivered: {Success}/{Total} clients in {DeliveryTime}ms",
+                successCount, connectionCount, deliveryTime);
+
+            // Clean up failed connections
+            await CleanupFailedConnections(failedConnections);
 
             // Retry logic for important messages
-            if (failedClients.Any() && message.RetryCount < 3)
+            if (failedConnections.Any() && message.RetryCount < 3 && message.Priority > 0)
             {
                 message.RetryCount++;
-                Console.WriteLine($"Retrying message delivery (attempt {message.RetryCount})");
-                await Task.Delay(1000);
+                var retryDelay = TimeSpan.FromMilliseconds(Math.Pow(2, message.RetryCount) * 500);
+
+                _logger.LogInformation("🔄 Retrying WebSocket message delivery (attempt {RetryCount}) in {RetryDelay}ms",
+                    message.RetryCount, retryDelay.TotalMilliseconds);
+
+                await Task.Delay(retryDelay);
                 _messageQueue.Enqueue(message);
             }
         }
 
-        private async Task AcceptClientsAsync(CancellationToken cancellationToken)
+        private async Task CleanupFailedConnections(List<Guid> failedConnectionIds)
+        {
+            foreach (var connectionId in failedConnectionIds)
+            {
+                if (_connections.TryRemove(connectionId, out var connection))
+                {
+                    connection.Dispose();
+                    _logger.LogInformation("🧹 Removed failed WebSocket connection {ConnectionId}", connectionId);
+                }
+            }
+        }
+
+        private async Task AcceptWebSocketsAsync(CancellationToken cancellationToken)
         {
             try
             {
-                while (!cancellationToken.IsCancellationRequested)
+                while (!cancellationToken.IsCancellationRequested && _httpListener != null)
                 {
-                    var tcpClient = await _listener!.AcceptTcpClientAsync();
-                    _logger.LogInformation("New client connected from {RemoteEndPoint}", tcpClient.Client.RemoteEndPoint);
+                    var context = await _httpListener.GetContextAsync();
 
-                    var clientId = Guid.NewGuid();
-                    var clientConnection = new ClientConnection(clientId, tcpClient, _logger, _clients);
-                    _clients.TryAdd(clientId, clientConnection);
+                    if (context.Request.IsWebSocketRequest)
+                    {
+                        var webSocketContext = await context.AcceptWebSocketAsync(null);
+                        var connectionId = Guid.NewGuid();
 
-                    // Start a task to handle this client
-                    _ = Task.Run(async () => await HandleClientAsync(clientConnection, cancellationToken), cancellationToken);
+                        _totalClientsConnected++;
+                        _logger.LogInformation("🎯 New WebSocket connection from {RemoteEndPoint} (Total: {TotalConnected})",
+                            context.Request.RemoteEndPoint, _totalClientsConnected);
+
+                        var connection = new WebSocketConnection(
+                            connectionId,
+                            webSocketContext.WebSocket,
+                            _logger,
+                            _connections,
+                            context.Request.RemoteEndPoint?.ToString() ?? "Unknown");
+
+                        _connections.TryAdd(connectionId, connection);
+
+                        // Handle connection in background
+                        _ = Task.Run(async () => await HandleConnectionAsync(connection, cancellationToken));
+                    }
+                    else
+                    {
+                        // Serve a simple WebSocket test page for debugging
+                        await ServeTestPage(context);
+                    }
                 }
             }
             catch (OperationCanceledException)
             {
-                _logger.LogInformation("Server loop was cancelled");
+                _logger.LogInformation("🛑 WebSocket server loop was cancelled");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error in server loop");
+                _logger.LogError(ex, "❌ Error in WebSocket server loop");
             }
         }
 
-        private async Task HandleClientAsync(ClientConnection client, CancellationToken cancellationToken)
+        private async Task HandleConnectionAsync(WebSocketConnection connection, CancellationToken cancellationToken)
         {
             try
             {
-                await client.HandleCommunicationAsync(cancellationToken);
+                await connection.HandleAsync(cancellationToken);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error handling client {ClientId}", client.Id);
+                _logger.LogError(ex, "❌ Error handling WebSocket connection {ConnectionId}", connection.Id);
             }
             finally
             {
-                if (_clients.TryRemove(client.Id, out _))
+                if (_connections.TryRemove(connection.Id, out _))
                 {
-                    client.Dispose();
-                    _logger.LogInformation("Client {ClientId} disconnected", client.Id);
+                    connection.Dispose();
+                    _logger.LogInformation("👋 WebSocket connection {ConnectionId} disconnected (Remaining: {RemainingConnections})",
+                        connection.Id, _connections.Count);
                 }
             }
         }
 
-        public int GetConnectedClientsCount()
+        private async Task ServeTestPage(HttpListenerContext context)
         {
-            return _clients.Count;
+            var testPageHtml = """
+                <!DOCTYPE html>
+                <html>
+                <head><title>WebSocket Test</title></head>
+                <body>
+                    <h1>Flight Management WebSocket Server</h1>
+                    <p>WebSocket server is running!</p>
+                    <div id="status">Disconnected</div>
+                    <button onclick="connect()">Connect</button>
+                    <button onclick="testMessage()">Test Message</button>
+                    <div id="messages"></div>
+                    <script>
+                        let ws;
+                        function connect() {
+                            ws = new WebSocket('ws://localhost:8080');
+                            ws.onopen = () => document.getElementById('status').innerText = 'Connected';
+                            ws.onclose = () => document.getElementById('status').innerText = 'Disconnected';
+                            ws.onmessage = (e) => {
+                                const div = document.createElement('div');
+                                div.textContent = 'Received: ' + e.data;
+                                document.getElementById('messages').appendChild(div);
+                            };
+                        }
+                        function testMessage() {
+                            if (ws) ws.send(JSON.stringify({type: 'Ping', data: 'Test', timestamp: new Date()}));
+                        }
+                    </script>
+                </body>
+                </html>
+                """;
+
+            var bytes = Encoding.UTF8.GetBytes(testPageHtml);
+            context.Response.ContentLength64 = bytes.Length;
+            context.Response.ContentType = "text/html";
+            await context.Response.OutputStream.WriteAsync(bytes);
+            context.Response.Close();
         }
 
-        public List<ClientInfo> GetConnectedClients()
+        private int GetMessagePriority(string message)
         {
-            return _clients.Values.Select(c => new ClientInfo
+            try
             {
-                Id = c.Id,
-                ConnectedAt = c.ConnectedAt,
-                RemoteEndPoint = c.RemoteEndPoint,
-                SubscribedFlights = c.SubscribedFlights.ToList()
-            }).ToList();
+                if (message.Contains("FlightStatusUpdate")) return 3; // High priority
+                if (message.Contains("SeatLock")) return 2; // Medium priority
+                if (message.Contains("SeatAssignment")) return 2; // Medium priority
+                if (message.Contains("CheckInComplete")) return 1; // Low priority
+                return 0; // Default priority
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        public int GetConnectedClientsCount() => _connections.Count;
+
+        public WebSocketServerStats GetStats()
+        {
+            return new WebSocketServerStats
+            {
+                ConnectedClients = _connections.Count,
+                TotalClientsConnected = _totalClientsConnected,
+                TotalMessagesSent = _totalMessagesSent,
+                QueuedMessages = _messageQueue.Count
+            };
         }
     }
 
-    // Make ClientConnection public to fix accessibility error
-    public class ClientConnection : IDisposable
+    public class WebSocketConnection : IDisposable
     {
         public Guid Id { get; }
         public DateTime ConnectedAt { get; }
         public string RemoteEndPoint { get; }
         public HashSet<string> SubscribedFlights { get; } = new();
 
-        private readonly TcpClient _tcpClient;
-        private readonly NetworkStream _stream;
+        private readonly WebSocket _webSocket;
         private readonly ILogger _logger;
-        private readonly ConcurrentDictionary<Guid, ClientConnection> _allClients;
+        private readonly ConcurrentDictionary<Guid, WebSocketConnection> _allConnections;
+        private readonly SemaphoreSlim _sendSemaphore;
         private bool _disposed = false;
 
-        public ClientConnection(Guid id, TcpClient tcpClient, ILogger logger, ConcurrentDictionary<Guid, ClientConnection> allClients)
+        public WebSocketConnection(
+            Guid id,
+            WebSocket webSocket,
+            ILogger logger,
+            ConcurrentDictionary<Guid, WebSocketConnection> allConnections,
+            string remoteEndPoint)
         {
             Id = id;
             ConnectedAt = DateTime.UtcNow;
-            RemoteEndPoint = tcpClient.Client.RemoteEndPoint?.ToString() ?? "Unknown";
-            _tcpClient = tcpClient;
-            _stream = tcpClient.GetStream();
+            RemoteEndPoint = remoteEndPoint;
+            _webSocket = webSocket;
             _logger = logger;
-            _allClients = allClients;
+            _allConnections = allConnections;
+            _sendSemaphore = new SemaphoreSlim(1, 1);
         }
 
-        public async Task HandleCommunicationAsync(CancellationToken cancellationToken)
+        public async Task HandleAsync(CancellationToken cancellationToken)
         {
             var buffer = new byte[4096];
 
             try
             {
-                // Send welcome message (no await needed since it's void)
-                SendWelcomeMessage();
+                // Send welcome message
+                await SendWelcomeMessageAsync();
 
-                while (!cancellationToken.IsCancellationRequested && _tcpClient.Connected)
+                while (_webSocket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
                 {
-                    var bytesRead = await _stream.ReadAsync(buffer, 0, buffer.Length, cancellationToken);
+                    var result = await _webSocket.ReceiveAsync(buffer, cancellationToken);
 
-                    if (bytesRead == 0)
+                    if (result.MessageType == WebSocketMessageType.Text)
                     {
+                        var message = Encoding.UTF8.GetString(buffer, 0, result.Count);
+                        _logger.LogDebug("📨 Received from WebSocket {ConnectionId}: {MessageType}", Id, GetMessageType(message));
+                        await ProcessMessageAsync(message);
+                    }
+                    else if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        _logger.LogDebug("📪 WebSocket {ConnectionId} requested close", Id);
                         break;
                     }
-
-                    var message = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-                    _logger.LogDebug("Received message from client {ClientId}: {Message}", Id, message);
-
-                    ProcessClientMessage(message); // No await needed
                 }
             }
             catch (OperationCanceledException)
             {
-                // Expected when cancellation is requested
+                _logger.LogDebug("🛑 WebSocket {ConnectionId} operation cancelled", Id);
             }
-            catch (IOException)
+            catch (WebSocketException wsEx)
             {
-                // Client disconnected
+                _logger.LogDebug("📪 WebSocket {ConnectionId} disconnected: {Error}", Id, wsEx.Message);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error in client communication for {ClientId}", Id);
+                _logger.LogError(ex, "❌ Error in WebSocket communication for {ConnectionId}", Id);
             }
         }
 
-        private void ProcessClientMessage(string message)
+        private async Task ProcessMessageAsync(string message)
         {
             try
             {
-                Console.WriteLine($"Raw message received: {message}");
+                Console.WriteLine($"📨 WebSocket message from {Id}: {message}");
 
                 var socketMessage = JsonSerializer.Deserialize<SocketMessage>(message);
                 if (socketMessage == null) return;
 
-                Console.WriteLine($"Parsed message type: {socketMessage.Type}");
+                Console.WriteLine($"📋 Parsed WebSocket message type: {socketMessage.Type} from connection {Id}");
 
                 switch (socketMessage.Type)
                 {
                     case MessageType.Ping:
-                        SendPongResponse();
+                        await SendPongResponseAsync();
                         break;
 
                     case MessageType.FlightSubscription:
-                        HandleFlightSubscription(socketMessage);
+                        await HandleFlightSubscriptionAsync(socketMessage);
                         break;
 
                     case MessageType.SeatAssignment:
                     case MessageType.FlightStatusUpdate:
                     case MessageType.SeatLock:
-                        // Forward to other clients
-                        ForwardMessageToOtherClients(socketMessage);
+                    case MessageType.CheckInComplete:
+                        // CRITICAL: Forward to other connections immediately
+                        await ForwardMessageToOtherConnectionsAsync(socketMessage);
+                        break;
+
+                    default:
+                        _logger.LogDebug("❓ Unknown WebSocket message type {MessageType} from connection {ConnectionId}",
+                            socketMessage.Type, Id);
                         break;
                 }
             }
             catch (JsonException ex)
             {
-                Console.WriteLine($"Failed to parse message: {ex.Message}");
+                _logger.LogWarning("📝 Failed to parse WebSocket message from connection {ConnectionId}: {Error}", Id, ex.Message);
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error processing message: {ex.Message}");
+                _logger.LogError(ex, "❌ Error processing WebSocket message from connection {ConnectionId}", Id);
             }
         }
 
-        private void ForwardMessageToOtherClients(SocketMessage message)
+        private async Task ForwardMessageToOtherConnectionsAsync(SocketMessage message)
         {
             try
             {
                 var json = JsonSerializer.Serialize(message);
-                Console.WriteLine($"Forwarding message type {message.Type} to other clients");
+                _logger.LogDebug("🔄 Forwarding WebSocket {MessageType} from connection {ConnectionId} to {OtherConnectionCount} other connections",
+                    message.Type, Id, _allConnections.Count - 1);
 
-                var failedClients = new List<Guid>();
+                Console.WriteLine($"🔄 FORWARDING WebSocket {message.Type} from {Id} to {_allConnections.Count - 1} other connections");
 
-                // Send to all other clients (not this one)
-                foreach (var client in _allClients.Values.Where(c => c.Id != this.Id))
-                {
-                    try
+                var forwardTasks = _allConnections.Values
+                    .Where(c => c.Id != this.Id && !c._disposed)
+                    .Select(async connection =>
                     {
-                        client.SendMessage(json);
-                        Console.WriteLine($"Forwarded message to client {client.Id}");
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"Failed to forward message to client {client.Id}: {ex.Message}");
-                        failedClients.Add(client.Id);
-                    }
-                }
+                        try
+                        {
+                            await connection.SendAsync(json);
+                            return new { ConnectionId = connection.Id, Success = true };
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning("❌ Failed to forward WebSocket message to connection {ConnectionId}: {Error}",
+                                connection.Id, ex.Message);
+                            return new { ConnectionId = connection.Id, Success = false };
+                        }
+                    });
 
-                // Clean up failed clients
-                foreach (var clientId in failedClients)
-                {
-                    if (_allClients.TryRemove(clientId, out var client))
-                    {
-                        client.Dispose();
-                        Console.WriteLine($"Removed failed client {clientId}");
-                    }
-                }
+                var results = await Task.WhenAll(forwardTasks);
+                var successCount = results.Count(r => r.Success);
+
+                Console.WriteLine($"✅ WebSocket FORWARDED to {successCount}/{results.Length} connections");
+                _logger.LogDebug("✅ WebSocket message forwarded to {Success}/{Total} connections", successCount, results.Length);
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error forwarding message: {ex.Message}");
+                _logger.LogError(ex, "❌ Error forwarding WebSocket message from connection {ConnectionId}", Id);
             }
         }
 
-        private void HandleFlightSubscription(SocketMessage message)
+        private async Task HandleFlightSubscriptionAsync(SocketMessage message)
         {
             try
             {
@@ -365,7 +493,7 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
                     if (!string.IsNullOrEmpty(flightNumber))
                     {
                         SubscribedFlights.Add(flightNumber);
-                        _logger.LogInformation("Client {ClientId} subscribed to flight {FlightNumber}", Id, flightNumber);
+                        _logger.LogInformation("✈️ WebSocket connection {ConnectionId} subscribed to flight {FlightNumber}", Id, flightNumber);
 
                         // Send confirmation
                         var response = new SocketMessage
@@ -375,29 +503,36 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
                             Timestamp = DateTime.UtcNow
                         };
 
-                        SendMessage(JsonSerializer.Serialize(response));
+                        await SendAsync(JsonSerializer.Serialize(response));
                     }
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error handling flight subscription for client {ClientId}", Id);
+                _logger.LogError(ex, "❌ Error handling WebSocket flight subscription for connection {ConnectionId}", Id);
             }
         }
 
-        private void SendWelcomeMessage()
+        private async Task SendWelcomeMessageAsync()
         {
             var welcomeMessage = new SocketMessage
             {
                 Type = MessageType.System,
-                Data = new { message = "Connected to Flight Management Socket Server", clientId = Id },
+                Data = new
+                {
+                    message = "Connected to Flight Management WebSocket Server",
+                    connectionId = Id,
+                    serverTime = DateTime.UtcNow,
+                    protocol = "WebSocket"
+                },
                 Timestamp = DateTime.UtcNow
             };
 
-            SendMessage(JsonSerializer.Serialize(welcomeMessage));
+            await SendAsync(JsonSerializer.Serialize(welcomeMessage));
+            _logger.LogDebug("👋 WebSocket welcome message sent to connection {ConnectionId}", Id);
         }
 
-        private void SendPongResponse()
+        private async Task SendPongResponseAsync()
         {
             var response = new SocketMessage
             {
@@ -406,24 +541,36 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
                 Timestamp = DateTime.UtcNow
             };
 
-            SendMessage(JsonSerializer.Serialize(response));
+            await SendAsync(JsonSerializer.Serialize(response));
         }
 
-        public void SendMessage(string message)
+        public async Task SendAsync(string message)
         {
-            if (!_tcpClient.Connected || _disposed)
+            if (_webSocket.State != WebSocketState.Open || _disposed)
                 return;
 
+            await _sendSemaphore.WaitAsync();
             try
             {
-                var data = Encoding.UTF8.GetBytes(message);
-                _stream.Write(data, 0, data.Length);
-                _stream.Flush();
+                var bytes = Encoding.UTF8.GetBytes(message);
+                await _webSocket.SendAsync(bytes, WebSocketMessageType.Text, true, CancellationToken.None);
             }
-            catch (Exception ex)
+            finally
             {
-                _logger.LogError(ex, "Error sending message to client {ClientId}", Id);
-                throw;
+                _sendSemaphore.Release();
+            }
+        }
+
+        private string GetMessageType(string message)
+        {
+            try
+            {
+                var json = JsonDocument.Parse(message);
+                return json.RootElement.GetProperty("type").GetString() ?? "Unknown";
+            }
+            catch
+            {
+                return "Unknown";
             }
         }
 
@@ -433,32 +580,39 @@ namespace FlightManagementSystem.Infrastructure.SocketServer
 
             try
             {
-                _stream.Close();
-                _tcpClient.Close();
-                _tcpClient.Dispose();
+                _sendSemaphore?.Dispose();
+                if (_webSocket.State == WebSocketState.Open)
+                {
+                    _ = _webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Server shutdown", CancellationToken.None);
+                }
+                _webSocket?.Dispose();
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error disposing client connection {ClientId}", Id);
+                _logger.LogError(ex, "❌ Error disposing WebSocket connection {ConnectionId}", Id);
             }
 
             _disposed = true;
         }
     }
 
-    // Supporting classes
+    #region Supporting Classes
+
     public class BroadcastMessage
     {
         public string Content { get; set; } = string.Empty;
         public DateTime Timestamp { get; set; }
         public int RetryCount { get; set; }
+        public int Priority { get; set; } = 0;
     }
 
-    public class ClientInfo
+    public class WebSocketServerStats
     {
-        public Guid Id { get; set; }
-        public DateTime ConnectedAt { get; set; }
-        public string RemoteEndPoint { get; set; } = string.Empty;
-        public List<string> SubscribedFlights { get; set; } = new();
+        public int ConnectedClients { get; set; }
+        public long TotalClientsConnected { get; set; }
+        public long TotalMessagesSent { get; set; }
+        public int QueuedMessages { get; set; }
     }
+
+    #endregion
 }
