@@ -70,6 +70,10 @@ app.UseHttpsRedirection();
 app.UseStaticFiles();
 app.UseRouting();
 app.UseCors("AllowAllOrigins");
+
+// Add anti-forgery middleware (REQUIRED for Blazor Server)
+app.UseAntiforgery();
+
 app.UseAuthorization();
 
 // Map controllers and SignalR endpoints
@@ -80,7 +84,6 @@ app.MapRazorComponents<FlightManagementSystem.Web.Components.App>()
 
 // Initialize the database
 await DatabaseInitializer.InitializeDatabaseAsync(app.Services);
-
 
 app.Run();
 
