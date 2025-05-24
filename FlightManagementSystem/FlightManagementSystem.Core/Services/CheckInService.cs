@@ -88,10 +88,10 @@ namespace FlightManagementSystem.Core.Services
         }
 
         public async Task<(bool Success, string Message, BoardingPass? BoardingPass)> CheckInPassengerAsync(
-            string bookingReference,
-            string seatId,
-            string staffId,
-            string counterId)
+    string bookingReference,
+    string seatId,
+    string staffId,
+    string counterId)
         {
             // Get or create a semaphore for this specific seat
             var seatSemaphore = _seatLocks.GetOrAdd(seatId, _ => new SemaphoreSlim(1, 1));
@@ -108,7 +108,7 @@ namespace FlightManagementSystem.Core.Services
                 _seatProcessingTracker[seatId] = DateTime.UtcNow;
 
                 // Broadcast seat lock to other terminals immediately
-                BroadcastSeatLock(seatId, true);
+                await BroadcastSeatLockAsync(seatId, true);
 
                 // Get booking details
                 var booking = await _bookingRepository.GetByReferenceWithDetailsAsync(bookingReference);
@@ -178,7 +178,7 @@ namespace FlightManagementSystem.Core.Services
                     await _unitOfWork.SaveChangesAsync();
 
                     // Broadcast successful seat assignment to all terminals
-                    BroadcastSeatAssignment(seatId, flight.FlightNumber, booking.Passenger.FirstName + " " + booking.Passenger.LastName);
+                    await BroadcastSeatAssignmentAsync(seatId, flight.FlightNumber, booking.Passenger.FirstName + " " + booking.Passenger.LastName);
 
                     return (true, "Check-in successful", boardingPass);
                 }
@@ -197,10 +197,64 @@ namespace FlightManagementSystem.Core.Services
                 _seatProcessingTracker.TryRemove(seatId, out _);
 
                 // Broadcast seat unlock
-                BroadcastSeatLock(seatId, false);
+                await BroadcastSeatLockAsync(seatId, false);
 
                 // Release the semaphore
                 seatSemaphore.Release();
+            }
+        }
+
+        private async Task BroadcastSeatLockAsync(string seatId, bool isLocked)
+        {
+            try
+            {
+                var message = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    type = "SeatLock",
+                    data = new
+                    {
+                        seatId = seatId,
+                        isLocked = isLocked,
+                        timestamp = DateTime.UtcNow
+                    },
+                    timestamp = DateTime.UtcNow
+                });
+
+                _socketServer.BroadcastMessage(message);
+                Console.WriteLine($"Broadcasted seat lock: {seatId} = {isLocked}");
+            }
+            catch (Exception ex)
+            {
+                // Log error but don't fail the check-in process
+                Console.WriteLine($"Error broadcasting seat lock: {ex.Message}");
+            }
+        }
+
+        private async Task BroadcastSeatAssignmentAsync(string seatId, string flightNumber, string passengerName)
+        {
+            try
+            {
+                var message = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    type = "SeatAssignment",
+                    data = new
+                    {
+                        seatId = seatId,
+                        flightNumber = flightNumber,
+                        passengerName = passengerName,
+                        isAssigned = true,
+                        timestamp = DateTime.UtcNow
+                    },
+                    timestamp = DateTime.UtcNow
+                });
+
+                _socketServer.BroadcastMessage(message);
+                Console.WriteLine($"Broadcasted seat assignment: {seatId} on flight {flightNumber}");
+            }
+            catch (Exception ex)
+            {
+                // Log error but don't fail the check-in process
+                Console.WriteLine($"Error broadcasting seat assignment: {ex.Message}");
             }
         }
 

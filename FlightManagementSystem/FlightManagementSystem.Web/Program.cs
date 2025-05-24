@@ -110,6 +110,38 @@ catch (Exception ex)
     app.Logger.LogError(ex, "An error occurred while initializing the database");
 }
 
+builder.Services.AddLogging(logging =>
+{
+    logging.ClearProviders();
+    logging.AddConsole();
+    logging.AddDebug();
+    logging.SetMinimumLevel(LogLevel.Debug);
+});
+app.Logger.LogInformation("=== APPLICATION STARTUP ===");
+app.Logger.LogInformation("Socket Server Port: {Port}", builder.Configuration.GetValue<int>("SocketServer:Port", 5000));
+
+// Test SignalR service registration
+var hubService = app.Services.GetService<IFlightHubService>();
+if (hubService != null)
+{
+    app.Logger.LogInformation("FlightHubService registered successfully");
+}
+else
+{
+    app.Logger.LogError("FlightHubService NOT registered - SignalR will not work!");
+}
+
+// Test Socket Server registration
+var socketServer = app.Services.GetService<ISocketServer>();
+if (socketServer != null)
+{
+    app.Logger.LogInformation("Socket Server registered successfully");
+}
+else
+{
+    app.Logger.LogError("Socket Server NOT registered!");
+}
+
 app.Logger.LogInformation("Application starting...");
 app.Run();
 

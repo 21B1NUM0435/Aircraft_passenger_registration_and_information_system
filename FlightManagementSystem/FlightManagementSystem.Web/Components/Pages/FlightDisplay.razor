@@ -119,18 +119,21 @@
             hubConnection.Closed += async (error) =>
             {
                 connectionStatus = "Disconnected";
+                Console.WriteLine($"SignalR Connection Closed: {error?.Message}");
                 await InvokeAsync(StateHasChanged);
             };
 
             hubConnection.Reconnecting += async (error) =>
             {
                 connectionStatus = "Reconnecting...";
+                Console.WriteLine($"SignalR Reconnecting: {error?.Message}");
                 await InvokeAsync(StateHasChanged);
             };
 
             hubConnection.Reconnected += async (connectionId) =>
             {
                 connectionStatus = "Connected";
+                Console.WriteLine($"SignalR Reconnected: {connectionId}");
                 await InvokeAsync(StateHasChanged);
             };
 
@@ -139,10 +142,12 @@
             {
                 try
                 {
-                    Console.WriteLine($"Received FlightStatusChanged: {data}");
+                    Console.WriteLine($"Received FlightStatusChanged via SignalR: {data}");
 
                     // Parse the data object
                     var json = JsonSerializer.Serialize(data);
+                    Console.WriteLine($"SignalR data JSON: {json}");
+
                     var message = JsonSerializer.Deserialize<FlightStatusUpdateMessage>(json, new JsonSerializerOptions
                         {
                             PropertyNameCaseInsensitive = true
@@ -153,9 +158,13 @@
                         var flight = flights.FirstOrDefault(f => f.FlightNumber == message.FlightNumber);
                         if (flight != null)
                         {
+                            Console.WriteLine($"Updating flight {message.FlightNumber} from {flight.Status} to {message.NewStatus}");
                             flight.Status = message.NewStatus;
                             await InvokeAsync(StateHasChanged);
-                            Console.WriteLine($"Updated flight {message.FlightNumber} status to {message.NewStatus}");
+                        }
+                        else
+                        {
+                            Console.WriteLine($"Flight {message.FlightNumber} not found in flights list");
                         }
                     }
                 }
@@ -169,7 +178,7 @@
             {
                 try
                 {
-                    Console.WriteLine($"Received SeatAssigned: {data}");
+                    Console.WriteLine($"Received SeatAssigned via SignalR: {data}");
                     // Handle seat assignment if needed for display
                 }
                 catch (Exception ex)
@@ -182,7 +191,7 @@
             {
                 try
                 {
-                    Console.WriteLine($"Received PassengerCheckedIn: {data}");
+                    Console.WriteLine($"Received PassengerCheckedIn via SignalR: {data}");
                     // Handle passenger check-in if needed for display
                 }
                 catch (Exception ex)
@@ -192,9 +201,10 @@
             });
 
             // Start the connection
+            Console.WriteLine("Starting SignalR connection...");
             await hubConnection.StartAsync();
             connectionStatus = "Connected";
-            Console.WriteLine("SignalR connection established");
+            Console.WriteLine("SignalR connection established successfully");
         }
         catch (Exception ex)
         {

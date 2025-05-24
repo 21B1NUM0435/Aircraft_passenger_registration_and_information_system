@@ -218,6 +218,8 @@ namespace FlightManagementSystem.WinApp.Services
         {
             try
             {
+                Console.WriteLine($"Processing seat assignment message: {data}");
+
                 string json;
                 if (data is JsonElement element)
                 {
@@ -227,6 +229,8 @@ namespace FlightManagementSystem.WinApp.Services
                 {
                     json = JsonSerializer.Serialize(data);
                 }
+
+                Console.WriteLine($"Seat assignment JSON: {json}");
 
                 var seatMsg = JsonSerializer.Deserialize<SeatAssignmentMessage>(json, new JsonSerializerOptions
                 {
@@ -249,6 +253,8 @@ namespace FlightManagementSystem.WinApp.Services
         {
             try
             {
+                Console.WriteLine($"Processing flight status message: {data}");
+
                 string json;
                 if (data is JsonElement element)
                 {
@@ -258,6 +264,8 @@ namespace FlightManagementSystem.WinApp.Services
                 {
                     json = JsonSerializer.Serialize(data);
                 }
+
+                Console.WriteLine($"Flight status JSON: {json}");
 
                 var flightMsg = JsonSerializer.Deserialize<FlightStatusMessage>(json, new JsonSerializerOptions
                 {
@@ -318,6 +326,20 @@ namespace FlightManagementSystem.WinApp.Services
 
 
     // Message classes for socket communication
+    public class SeatAssignmentMessage
+    {
+        public string SeatId { get; set; } = string.Empty;
+        public string FlightNumber { get; set; } = string.Empty;
+        public bool IsAssigned { get; set; }
+        public string PassengerName { get; set; } = string.Empty;
+    }
+
+    public class FlightStatusMessage
+    {
+        public string FlightNumber { get; set; } = string.Empty;
+        public string NewStatus { get; set; } = string.Empty;
+        public DateTime Timestamp { get; set; }
+    }
 
     public class SeatLockMessage
     {
@@ -338,13 +360,6 @@ namespace FlightManagementSystem.WinApp.Services
         public string SeatId { get; set; } = string.Empty;
         public string FlightNumber { get; set; } = string.Empty;
         public bool IsReserved { get; set; }
-        public DateTime Timestamp { get; set; }
-    }
-
-    public class FlightStatusMessage
-    {
-        public string FlightNumber { get; set; } = string.Empty;
-        public string NewStatus { get; set; } = string.Empty;
         public DateTime Timestamp { get; set; }
     }
 
