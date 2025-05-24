@@ -13,7 +13,10 @@ namespace FlightManagementSystem.Core.Models
         SeatAssignment,
         CheckInComplete,
         Error,
-        Ping
+        Ping,
+        FlightSubscription,
+        System,
+        SeatLock
     }
 
     public class SocketMessage
@@ -47,6 +50,9 @@ namespace FlightManagementSystem.Core.Models
 
         [JsonPropertyName("isAssigned")]
         public bool IsAssigned { get; set; }
+
+        [JsonPropertyName("passengerName")]
+        public string PassengerName { get; set; } = string.Empty;
     }
 
     public class CheckInCompleteMessage
@@ -59,6 +65,18 @@ namespace FlightManagementSystem.Core.Models
 
         [JsonPropertyName("passengerName")]
         public string PassengerName { get; set; } = string.Empty;
+    }
+
+    public class SeatLockMessage
+    {
+        [JsonPropertyName("seatId")]
+        public string SeatId { get; set; } = string.Empty;
+
+        [JsonPropertyName("flightNumber")]
+        public string FlightNumber { get; set; } = string.Empty;
+
+        [JsonPropertyName("isLocked")]
+        public bool IsLocked { get; set; }
     }
 
     public class ErrorMessage

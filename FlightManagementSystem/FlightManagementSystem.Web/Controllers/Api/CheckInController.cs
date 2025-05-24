@@ -2,6 +2,7 @@
 using FlightManagementSystem.Web.Models.Api;
 using Microsoft.AspNetCore.Mvc;
 using System.Collections.Concurrent;
+using FlightManagementSystem.Core.Models;
 
 namespace FlightManagementSystem.Web.Controllers.Api
 {
@@ -107,6 +108,9 @@ namespace FlightManagementSystem.Web.Controllers.Api
         [ProducesResponseType(StatusCodes.Status423Locked)]
         public async Task<ActionResult<CheckInResponseDto>> ProcessCheckIn([FromBody] CheckInRequestDto request)
         {
+            _logger.LogInformation("Processing check-in request for booking {BookingReference}, seat {SeatId}",
+                request.BookingReference, request.SeatId);
+
             if (!ModelState.IsValid)
             {
                 return BadRequest(ModelState);
@@ -116,29 +120,31 @@ namespace FlightManagementSystem.Web.Controllers.Api
             if (_ongoingCheckIns.ContainsKey(request.SeatId))
             {
                 var processingTime = _ongoingCheckIns[request.SeatId];
-                if ((DateTime.UtcNow - processingTime).TotalSeconds < 30) // 30 second timeout
+                if ((DateTime.UtcNow - processingTime).TotalSeconds < 30)
                 {
+                    _logger.LogWarning("Seat {SeatId} is already being processed", request.SeatId);
                     return StatusCode(423, new { error = "This seat is currently being processed by another staff member. Please wait or select a different seat." });
                 }
                 else
                 {
-                    // Remove expired entry
                     _ongoingCheckIns.TryRemove(request.SeatId, out _);
                 }
             }
 
             // Mark seat as being processed
             _ongoingCheckIns[request.SeatId] = DateTime.UtcNow;
+            _logger.LogInformation("Marked seat {SeatId} as being processed", request.SeatId);
 
             try
             {
                 // Immediately broadcast seat lock to prevent race conditions
-                await BroadcastSeatLock(request.SeatId, request.FlightNumber, true);
+                BroadcastSeatLock(request.SeatId, request.FlightNumber, true);
 
                 // Verify seat is still available (double-check)
                 var isSeatAvailable = await _checkInService.IsSeatAvailableAsync(request.SeatId, request.FlightNumber);
                 if (!isSeatAvailable)
                 {
+                    _logger.LogWarning("Seat {SeatId} is no longer available", request.SeatId);
                     return Conflict(new { error = "The selected seat is no longer available" });
                 }
 
@@ -151,6 +157,8 @@ namespace FlightManagementSystem.Web.Controllers.Api
 
                 if (!result.Success)
                 {
+                    _logger.LogWarning("Check-in failed for booking {BookingReference}: {Message}",
+                        request.BookingReference, result.Message);
                     return BadRequest(new { error = result.Message });
                 }
 
@@ -161,12 +169,12 @@ namespace FlightManagementSystem.Web.Controllers.Api
                     boardingPassPdf = await _boardingPassService.GenerateBoardingPassPdfAsync(result.BoardingPass);
 
                     // Broadcast successful check-in to all clients
-                    await BroadcastCheckInComplete(request.FlightNumber, request.BookingReference,
+                    BroadcastCheckInComplete(request.FlightNumber, request.BookingReference,
                         request.PassengerName, request.SeatId);
                 }
 
-                _logger.LogInformation("Passenger with booking {BookingReference} checked in for flight {FlightNumber} at seat {SeatId}",
-                    request.BookingReference, request.FlightNumber, request.SeatId);
+                _logger.LogInformation("Check-in completed successfully for booking {BookingReference}, seat {SeatId}",
+                    request.BookingReference, request.SeatId);
 
                 return Ok(new CheckInResponseDto
                 {
@@ -185,7 +193,8 @@ namespace FlightManagementSystem.Web.Controllers.Api
             {
                 // Always remove from ongoing check-ins and broadcast unlock
                 _ongoingCheckIns.TryRemove(request.SeatId, out _);
-                await BroadcastSeatLock(request.SeatId, request.FlightNumber, false);
+                BroadcastSeatLock(request.SeatId, request.FlightNumber, false);
+                _logger.LogInformation("Released seat {SeatId} from processing", request.SeatId);
             }
         }
 
@@ -213,9 +222,11 @@ namespace FlightManagementSystem.Web.Controllers.Api
             }
         }
 
-        private async Task BroadcastSeatLock(string seatId, string flightNumber, bool isLocked)
+        // SINGLE BroadcastSeatLock method (not async)
+        private void BroadcastSeatLock(string seatId, string flightNumber, bool isLocked)
         {
-            Console.WriteLine($"Broadcasting seat lock: {seatId} = {isLocked} for flight {flightNumber}");
+            _logger.LogInformation("Broadcasting seat lock: {SeatId} = {IsLocked} for flight {FlightNumber}",
+                seatId, isLocked, flightNumber);
 
             var message = System.Text.Json.JsonSerializer.Serialize(new
             {
@@ -229,29 +240,32 @@ namespace FlightManagementSystem.Web.Controllers.Api
                 }
             });
 
-            Console.WriteLine($"Seat lock message: {message}");
-
             // Broadcast to Windows applications via Socket Server
             _socketServer.BroadcastMessage(message);
+            _logger.LogInformation("Sent seat lock message via Socket Server");
 
             // Broadcast to Web clients via SignalR Hub (if available)
             if (_flightHubService != null)
             {
                 try
                 {
-                    await _flightHubService.NotifySeatAssigned(flightNumber, seatId, isLocked);
-                    Console.WriteLine("SignalR seat lock notification sent");
+                    // Fire and forget for SignalR (don't await)
+                    _ = Task.Run(async () => await _flightHubService.NotifySeatAssigned(flightNumber, seatId, isLocked));
+                    _logger.LogInformation("Sent seat lock message via SignalR");
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"SignalR seat lock notification failed: {ex.Message}");
+                    _logger.LogError(ex, "Failed to send seat lock via SignalR");
                 }
             }
         }
 
-        private async Task BroadcastCheckInComplete(string flightNumber, string bookingReference, string passengerName, string seatId)
+        // SINGLE BroadcastCheckInComplete method (not async)
+        private void BroadcastCheckInComplete(string flightNumber, string bookingReference,
+            string passengerName, string seatId)
         {
-            Console.WriteLine($"Broadcasting check-in complete for seat {seatId} on flight {flightNumber}");
+            _logger.LogInformation("Broadcasting check-in complete for seat {SeatId} on flight {FlightNumber}",
+                seatId, flightNumber);
 
             // Broadcast seat assignment to Socket Server
             var seatMessage = System.Text.Json.JsonSerializer.Serialize(new
@@ -267,8 +281,8 @@ namespace FlightManagementSystem.Web.Controllers.Api
                 }
             });
 
-            Console.WriteLine($"Socket message: {seatMessage}");
             _socketServer.BroadcastMessage(seatMessage);
+            _logger.LogInformation("Sent seat assignment message via Socket Server");
 
             // Broadcast check-in complete
             var checkInMessage = System.Text.Json.JsonSerializer.Serialize(new
@@ -284,26 +298,29 @@ namespace FlightManagementSystem.Web.Controllers.Api
                 }
             });
 
-            Console.WriteLine($"Check-in message: {checkInMessage}");
             _socketServer.BroadcastMessage(checkInMessage);
+            _logger.LogInformation("Sent check-in complete message via Socket Server");
 
-            // SignalR notifications to web clients
+            // SignalR notifications to web clients (fire and forget)
             if (_flightHubService != null)
             {
                 try
                 {
-                    await _flightHubService.NotifySeatAssigned(flightNumber, seatId, true);
-                    await _flightHubService.NotifyPassengerCheckedIn(flightNumber, passengerName);
-                    Console.WriteLine("SignalR notifications sent successfully");
+                    _ = Task.Run(async () =>
+                    {
+                        await _flightHubService.NotifySeatAssigned(flightNumber, seatId, true);
+                        await _flightHubService.NotifyPassengerCheckedIn(flightNumber, passengerName);
+                    });
+                    _logger.LogInformation("Sent SignalR notifications successfully");
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"SignalR notification failed: {ex.Message}");
+                    _logger.LogError(ex, "Failed to send SignalR notifications");
                 }
             }
             else
             {
-                Console.WriteLine("FlightHubService is null - no SignalR notifications sent");
+                _logger.LogWarning("FlightHubService is null - no SignalR notifications sent");
             }
         }
     }
