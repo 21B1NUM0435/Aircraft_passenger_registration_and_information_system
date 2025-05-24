@@ -16,35 +16,81 @@ namespace FlightManagementSystem.WinApp.Forms
         private readonly string _staffId;
         private readonly string _staffName;
         private readonly string _counterId;
+
+        // Fix nullable warnings by proper initialization
         private List<FlightDto> _flights = new();
         private List<SeatDto> _availableSeats = new();
         private BookingDto? _currentBooking;
         private HubConnection? _hubConnection;
-        private SocketClient? _socketClient;
+        private WebSocketClient? _webSocketClient;
 
-        // Seat visualization
-        private Panel _seatMapPanel;
+        // Seat visualization - Fix nullable warnings
+        private Panel _seatMapPanel = new();
         private Dictionary<string, Button> _seatButtons = new();
         private string _selectedSeatId = "";
 
-        public MainForm(ApiService apiService, string staffId, string staffName, string counterId)
+        // Connection status label - Fix nullable warning
+        private Label lblConnectionStatus = new();
+
+        private async void MainForm_Load(object sender, EventArgs e)
         {
-            _apiService = apiService;
-            _staffId = staffId;
-            _staffName = staffName;
-            _counterId = counterId;
+            Console.WriteLine("🚀 MainForm loading with WebSocket...");
 
-            InitializeComponent();
+            await LoadFlightsAsync();
 
-            // Set staff info
-            lblStaffName.Text = $"Staff: {_staffName}";
-            lblCounterId.Text = $"Counter: {_counterId}";
+            // Initialize WebSocket client (instead of raw TCP socket)
+            try
+            {
+                Console.WriteLine("🌐 Initializing WebSocket client...");
+                _webSocketClient = new WebSocketClient("localhost", 8080); // Changed port to 8080
 
-            // Initialize SignalR connection
-            InitializeSignalRConnection();
+                // Register ALL event handlers before connecting
+                _webSocketClient.OnSeatReserved += OnSeatReservedFromSocket;
+                _webSocketClient.OnFlightStatusChanged += OnFlightStatusChangedFromSocket;
+                _webSocketClient.OnSeatLocked += OnSeatLockedFromSocket;
+                _webSocketClient.OnCheckInComplete += OnCheckInCompleteFromSocket;
+                _webSocketClient.OnConnectionStatusChanged += OnConnectionStatusChanged;
 
-            // Create seat map panel
-            CreateSeatMapPanel();
+                var connected = await _webSocketClient.ConnectAsync();
+                if (connected)
+                {
+                    Console.WriteLine("✅ WebSocket client connected successfully");
+                    UpdateConnectionStatus("WebSocket Connected", Color.Green);
+
+                    // Subscribe to flight updates for current flight
+                    if (cboFlights.SelectedItem is FlightDto selectedFlight)
+                    {
+                        await _webSocketClient.SubscribeToFlightAsync(selectedFlight.FlightNumber);
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("❌ Failed to connect to WebSocket server");
+                    MessageBox.Show("Could not connect to WebSocket server. Real-time updates may not work.",
+                        "Connection Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    UpdateConnectionStatus("WebSocket Disconnected", Color.Red);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ WebSocket client initialization error: {ex.Message}");
+                MessageBox.Show($"Could not connect to WebSocket server: {ex.Message}", "Connection Warning",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                UpdateConnectionStatus("WebSocket Error", Color.Red);
+            }
+        }
+
+        private void CreateConnectionStatusLabel()
+        {
+            lblConnectionStatus = new Label
+            {
+                Text = "Disconnected",
+                Location = new Point(12, 70),
+                Size = new Size(200, 25),
+                ForeColor = Color.Red,
+                Font = new Font("Segoe UI", 9, FontStyle.Bold)
+            };
+            this.Controls.Add(lblConnectionStatus);
         }
 
         private void CreateSeatMapPanel()
@@ -52,7 +98,7 @@ namespace FlightManagementSystem.WinApp.Forms
             _seatMapPanel = new Panel
             {
                 Size = new Size(700, 500),
-                Location = new Point(12, 400),
+                Location = new Point(12, 420),
                 BorderStyle = BorderStyle.FixedSingle,
                 AutoScroll = true,
                 BackColor = Color.White
@@ -65,18 +111,31 @@ namespace FlightManagementSystem.WinApp.Forms
             {
                 Text = "Aircraft Seat Map - Select Available Seat",
                 Font = new Font("Segoe UI", 12, FontStyle.Bold),
-                Location = new Point(12, 375),
+                Location = new Point(12, 395),
                 Size = new Size(400, 25)
             };
             this.Controls.Add(titleLabel);
         }
 
+        // CRITICAL: Add the missing seat visualization method
         private void CreateSeatVisualization()
         {
             _seatMapPanel.Controls.Clear();
             _seatButtons.Clear();
 
-            if (_availableSeats.Count == 0) return;
+            if (_availableSeats.Count == 0)
+            {
+                var noSeatsLabel = new Label
+                {
+                    Text = "No available seats for this flight",
+                    Location = new Point(20, 20),
+                    Size = new Size(300, 30),
+                    Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                    ForeColor = Color.Red
+                };
+                _seatMapPanel.Controls.Add(noSeatsLabel);
+                return;
+            }
 
             // Group seats by class and row
             var businessSeats = _availableSeats.Where(s => s.SeatClass == "Business").ToList();
@@ -123,6 +182,8 @@ namespace FlightManagementSystem.WinApp.Forms
 
             // Add legend
             CreateSeatLegend();
+
+            Console.WriteLine($"✅ Created seat visualization with {_availableSeats.Count} available seats");
         }
 
         private int CreateSeatRows(List<SeatDto> seats, int startY, string[] columns, int seatsPerSide, Color seatColor)
@@ -204,7 +265,7 @@ namespace FlightManagementSystem.WinApp.Forms
 
         private void CreateSeatLegend()
         {
-            int legendY = _seatMapPanel.Height - 80;
+            int legendY = Math.Max(_seatMapPanel.Height - 80, 400);
 
             // Available seat legend
             var availableBox = new Panel
@@ -286,7 +347,7 @@ namespace FlightManagementSystem.WinApp.Forms
             return int.TryParse(rowPart, out int row) ? row : 0;
         }
 
-        private void SeatButton_Click(object sender, EventArgs e)
+        private void SeatButton_Click(object? sender, EventArgs e)
         {
             if (sender is Button button && button.Tag is SeatDto seat)
             {
@@ -304,124 +365,25 @@ namespace FlightManagementSystem.WinApp.Forms
 
                 // Update selected seat info
                 lblSelectedSeat.Text = $"Selected: {seat.SeatNumber} ({seat.SeatClass}) - ${seat.Price}";
+                lblSelectedSeat.ForeColor = Color.Black;
 
                 // Enable check-in button
                 btnCheckIn.Enabled = _currentBooking != null && !_currentBooking.CheckedIn;
+
+                Console.WriteLine($"✅ Seat selected: {seat.SeatNumber} ({seat.SeatId})");
             }
         }
 
-        private async void OnSeatReservedFromSocket(string seatId, string flightNumber)
-        {
-            if (cboFlights.SelectedItem is FlightDto selectedFlight &&
-                selectedFlight.FlightNumber == flightNumber)
-            {
-                // Remove seat from available seats and update UI
-                await this.InvokeAsync(new Action(() =>
-                {
-                    var seatToRemove = _availableSeats.FirstOrDefault(s => s.SeatId == seatId);
-                    if (seatToRemove != null)
-                    {
-                        _availableSeats.Remove(seatToRemove);
-
-                        // Update seat button to show as occupied
-                        if (_seatButtons.ContainsKey(seatId))
-                        {
-                            var button = _seatButtons[seatId];
-                            button.BackColor = Color.Gray;
-                            button.ForeColor = Color.White;
-                            button.Enabled = false;
-                            _seatButtons.Remove(seatId);
-                        }
-
-                        // Clear selection if this seat was selected
-                        if (_selectedSeatId == seatId)
-                        {
-                            _selectedSeatId = "";
-                            lblSelectedSeat.Text = "Selected: None";
-                            btnCheckIn.Enabled = false;
-                        }
-                    }
-                }));
-            }
-        }
-
-        private async void OnFlightStatusChangedFromSocket(string flightNumber, string newStatus)
-        {
-            await this.InvokeAsync(new Action(() =>
-            {
-                var flight = _flights.FirstOrDefault(f => f.FlightNumber == flightNumber);
-                if (flight != null)
-                {
-                    flight.Status = newStatus;
-
-                    if (cboFlights.SelectedItem is FlightDto selectedFlight &&
-                        selectedFlight.FlightNumber == flightNumber)
-                    {
-                        UpdateFlightStatusUI(newStatus);
-                    }
-                }
-            }));
-        }
-
-        private async void MainForm_Load(object sender, EventArgs e)
-        {
-            await LoadFlightsAsync();
-
-            // Initialize socket client
-            try
-            {
-                _socketClient = new SocketClient("localhost", 5000);
-                _socketClient.OnSeatReserved += OnSeatReservedFromSocket;
-                _socketClient.OnFlightStatusChanged += OnFlightStatusChangedFromSocket;
-                _socketClient.OnConnectionStatusChanged += (status) =>
-                {
-                    this.Invoke(new Action(() =>
-                    {
-                        // Update UI to show connection status if needed
-                        Console.WriteLine($"Socket connection status: {status}");
-                    }));
-                };
-
-                var connected = await _socketClient.ConnectAsync();
-                if (!connected)
-                {
-                    MessageBox.Show("Could not connect to socket server. Real-time updates may not work.",
-                        "Connection Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Could not connect to socket server: {ex.Message}", "Connection Warning",
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
-        }
-
-        private async Task InvokeAsync(Action action)
+        private void UpdateConnectionStatus(string status, Color color)
         {
             if (InvokeRequired)
             {
-                Invoke(action);
+                Invoke(new Action(() => UpdateConnectionStatus(status, color)));
+                return;
             }
-            else
-            {
-                action();
-            }
-        }
 
-        private async Task NotifySocketServer(string message)
-        {
-            if (_socketClient != null)
-            {
-                try
-                {
-                    // Add your socket notification logic here
-                }
-                catch (Exception ex)
-                {
-                    // Log error but continue
-                    Console.WriteLine($"Socket notification error: {ex.Message}");
-                }
-            }
+            lblConnectionStatus.Text = status;
+            lblConnectionStatus.ForeColor = color;
         }
 
         private async Task LoadFlightsAsync()
@@ -442,9 +404,12 @@ namespace FlightManagementSystem.WinApp.Forms
                 {
                     cboFlights.SelectedIndex = 0;
                 }
+
+                Console.WriteLine($"✅ Loaded {_flights.Count} flights");
             }
             catch (Exception ex)
             {
+                Console.WriteLine($"❌ Error loading flights: {ex.Message}");
                 MessageBox.Show($"Error loading flights: {ex.Message}", "Error",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
@@ -452,12 +417,6 @@ namespace FlightManagementSystem.WinApp.Forms
             {
                 UseWaitCursor = false;
             }
-        }
-
-        private async void cboFlights_SelectedIndexChanged(object sender, EventArgs e)
-        {
-            await LoadAvailableSeatsAsync();
-            ClearPassengerInfo();
         }
 
         private async Task LoadAvailableSeatsAsync()
@@ -468,15 +427,20 @@ namespace FlightManagementSystem.WinApp.Forms
             try
             {
                 UseWaitCursor = true;
+                Console.WriteLine($"🪑 Loading seats for flight {selectedFlight.FlightNumber}");
+
                 _availableSeats = await _apiService.GetAvailableSeatsAsync(selectedFlight.FlightNumber);
 
-                // Create seat visualization
+                Console.WriteLine($"✅ Loaded {_availableSeats.Count} available seats");
+
+                // CRITICAL: Create seat visualization
                 CreateSeatVisualization();
 
                 UpdateFlightStatusUI(selectedFlight.Status);
             }
             catch (Exception ex)
             {
+                Console.WriteLine($"❌ Error loading seats: {ex.Message}");
                 MessageBox.Show($"Error loading available seats: {ex.Message}", "Error",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
@@ -488,13 +452,16 @@ namespace FlightManagementSystem.WinApp.Forms
 
         private void UpdateFlightStatusUI(string status)
         {
-            cboFlightStatus.Text = status;
+            if (cboFlightStatus != null)
+            {
+                cboFlightStatus.Text = status;
+            }
 
             bool isCheckInOpen = status == "CheckingIn";
 
-            txtPassportNumber.Enabled = isCheckInOpen;
-            btnSearch.Enabled = isCheckInOpen;
-            btnCheckIn.Enabled = isCheckInOpen && _currentBooking != null && !string.IsNullOrEmpty(_selectedSeatId);
+            if (txtPassportNumber != null) txtPassportNumber.Enabled = isCheckInOpen;
+            if (btnSearch != null) btnSearch.Enabled = isCheckInOpen;
+            if (btnCheckIn != null) btnCheckIn.Enabled = isCheckInOpen && _currentBooking != null && !string.IsNullOrEmpty(_selectedSeatId);
 
             // Enable/disable seat selection
             foreach (var button in _seatButtons.Values)
@@ -502,8 +469,11 @@ namespace FlightManagementSystem.WinApp.Forms
                 button.Enabled = isCheckInOpen;
             }
 
-            lblFlightStatus.Text = $"Status: {status}";
-            lblFlightStatus.ForeColor = GetStatusColor(status);
+            if (lblFlightStatus != null)
+            {
+                lblFlightStatus.Text = $"Status: {status}";
+                lblFlightStatus.ForeColor = GetStatusColor(status);
+            }
         }
 
         private Color GetStatusColor(string status)
@@ -519,12 +489,32 @@ namespace FlightManagementSystem.WinApp.Forms
             };
         }
 
-        private async void btnSearch_Click(object sender, EventArgs e)
+        private async void cboFlights_SelectedIndexChanged(object? sender, EventArgs e)
+        {
+            await LoadAvailableSeatsAsync();
+            ClearPassengerInfo();
+
+            // Subscribe to WebSocket updates for the selected flight
+            if (cboFlights.SelectedItem is FlightDto selectedFlight && _webSocketClient != null)
+            {
+                try
+                {
+                    await _webSocketClient.SubscribeToFlightAsync(selectedFlight.FlightNumber);
+                    Console.WriteLine($"✅ Subscribed to WebSocket updates for flight {selectedFlight.FlightNumber}");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"⚠️ Failed to subscribe to flight updates: {ex.Message}");
+                }
+            }
+        }
+
+        private async void btnSearch_Click(object? sender, EventArgs e)
         {
             if (cboFlights.SelectedItem is not FlightDto selectedFlight)
                 return;
 
-            var passportNumber = txtPassportNumber.Text.Trim();
+            var passportNumber = txtPassportNumber?.Text?.Trim() ?? "";
 
             if (string.IsNullOrEmpty(passportNumber))
             {
@@ -541,33 +531,33 @@ namespace FlightManagementSystem.WinApp.Forms
 
                 if (_currentBooking != null)
                 {
-                    lblPassengerName.Text = _currentBooking.PassengerName;
-                    lblBookingReference.Text = _currentBooking.BookingReference;
+                    if (lblPassengerName != null) lblPassengerName.Text = _currentBooking.PassengerName;
+                    if (lblBookingReference != null) lblBookingReference.Text = _currentBooking.BookingReference;
 
                     if (_currentBooking.CheckedIn)
                     {
                         MessageBox.Show("This passenger is already checked in.", "Already Checked In",
                             MessageBoxButtons.OK, MessageBoxIcon.Information);
-
-                        btnCheckIn.Enabled = false;
+                        if (btnCheckIn != null) btnCheckIn.Enabled = false;
                     }
                     else
                     {
-                        btnCheckIn.Enabled = !string.IsNullOrEmpty(_selectedSeatId);
+                        if (btnCheckIn != null) btnCheckIn.Enabled = !string.IsNullOrEmpty(_selectedSeatId);
                     }
 
-                    grpPassengerInfo.Visible = true;
+                    if (grpPassengerInfo != null) grpPassengerInfo.Visible = true;
+                    Console.WriteLine($"✅ Found booking for {_currentBooking.PassengerName}");
                 }
                 else
                 {
                     MessageBox.Show("No booking found for the provided passport number on this flight.",
                         "Booking Not Found", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-
                     ClearPassengerInfo();
                 }
             }
             catch (Exception ex)
             {
+                Console.WriteLine($"❌ Search error: {ex.Message}");
                 MessageBox.Show($"Error searching for booking: {ex.Message}", "Error",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
@@ -577,26 +567,8 @@ namespace FlightManagementSystem.WinApp.Forms
             }
         }
 
-        private void ClearPassengerInfo()
-        {
-            lblPassengerName.Text = "";
-            lblBookingReference.Text = "";
-            lblSelectedSeat.Text = "Selected: None";
-            grpPassengerInfo.Visible = false;
-            _currentBooking = null;
-
-            // Clear seat selection
-            if (!string.IsNullOrEmpty(_selectedSeatId) && _seatButtons.ContainsKey(_selectedSeatId))
-            {
-                var button = _seatButtons[_selectedSeatId];
-                var seat = button.Tag as SeatDto;
-                button.BackColor = seat?.SeatClass == "Business" ? Color.Gold : Color.LightBlue;
-            }
-            _selectedSeatId = "";
-        }
-
         [Obsolete]
-        private async void btnCheckIn_Click(object sender, EventArgs e)
+        private async void btnCheckIn_Click(object? sender, EventArgs e)
         {
             if (_currentBooking == null || string.IsNullOrEmpty(_selectedSeatId))
             {
@@ -605,9 +577,22 @@ namespace FlightManagementSystem.WinApp.Forms
                 return;
             }
 
+            // Double-check that seat is still available
+            var selectedSeat = _availableSeats.FirstOrDefault(s => s.SeatId == _selectedSeatId);
+            if (selectedSeat == null)
+            {
+                MessageBox.Show("The selected seat is no longer available. Please select a different seat.",
+                    "Seat Unavailable", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                ClearPassengerInfo();
+                return;
+            }
+
             try
             {
                 UseWaitCursor = true;
+                if (btnCheckIn != null) btnCheckIn.Enabled = false;
+
+                Console.WriteLine($"🎫 Starting check-in process for {_currentBooking.PassengerName}");
 
                 var checkInRequest = new CheckInRequestDto
                 {
@@ -623,58 +608,72 @@ namespace FlightManagementSystem.WinApp.Forms
 
                 if (success)
                 {
-                    MessageBox.Show("Check-in completed successfully.", "Success",
+                    Console.WriteLine($"✅ Check-in successful for {_currentBooking.PassengerName}");
+
+                    MessageBox.Show("Check-in completed successfully!", "Success",
                         MessageBoxButtons.OK, MessageBoxIcon.Information);
 
                     // Print boarding pass
                     if (cboFlights.SelectedItem is FlightDto selectedFlight)
                     {
-                        var selectedSeat = _availableSeats.FirstOrDefault(s => s.SeatId == _selectedSeatId);
-
                         PrintService.PrintBoardingPass(
                             _currentBooking.PassengerName,
                             selectedFlight.FlightNumber,
                             selectedFlight.Origin,
                             selectedFlight.Destination,
-                            "A12", // Gate would come from the API in a real system
+                            "A12",
                             selectedFlight.DepartureTime,
-                            selectedSeat?.SeatNumber ?? "N/A",
+                            selectedSeat.SeatNumber,
                             _currentBooking.BookingReference);
                     }
 
-                    // Send socket notification to other terminals
-                    await _socketClient.NotifySeatReservedAsync(_selectedSeatId, _currentBooking.FlightNumber);
+                    // CRITICAL: Notify other terminals via WebSocket
+                    if (_webSocketClient != null) // Updated reference
+                    {
+                        try
+                        {
+                            await _webSocketClient.NotifySeatReservedAsync(_selectedSeatId, _currentBooking.FlightNumber);
+                            Console.WriteLine($"📡 Sent seat reservation notification via WebSocket");
+                        }
+                        catch (Exception socketEx)
+                        {
+                            Console.WriteLine($"⚠️ Failed to send WebSocket notification: {socketEx.Message}");
+                        }
+                    }
 
                     // Clear the form for the next passenger
                     ClearPassengerInfo();
-                    txtPassportNumber.Clear();
+                    if (txtPassportNumber != null) txtPassportNumber.Clear();
 
                     // Refresh available seats
                     await LoadAvailableSeatsAsync();
                 }
                 else
                 {
+                    Console.WriteLine($"❌ Check-in failed: {message}");
                     MessageBox.Show($"Check-in failed: {message}", "Error",
                         MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }
             catch (Exception ex)
             {
+                Console.WriteLine($"❌ Check-in exception: {ex.Message}");
                 MessageBox.Show($"Error during check-in: {ex.Message}", "Error",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             finally
             {
                 UseWaitCursor = false;
+                if (btnCheckIn != null) btnCheckIn.Enabled = _currentBooking != null && !string.IsNullOrEmpty(_selectedSeatId);
             }
         }
 
-        private async void btnUpdateStatus_Click(object sender, EventArgs e)
+        private async void btnUpdateStatus_Click(object? sender, EventArgs e)
         {
             if (cboFlights.SelectedItem is not FlightDto selectedFlight)
                 return;
 
-            var newStatus = cboFlightStatus.Text;
+            var newStatus = cboFlightStatus?.Text ?? "";
 
             if (newStatus == selectedFlight.Status)
             {
@@ -686,97 +685,236 @@ namespace FlightManagementSystem.WinApp.Forms
             try
             {
                 UseWaitCursor = true;
+                if (btnUpdateStatus != null) btnUpdateStatus.Enabled = false;
+
+                Console.WriteLine($"🔄 Updating flight status: {selectedFlight.FlightNumber} -> {newStatus}");
 
                 var success = await _apiService.UpdateFlightStatusAsync(selectedFlight.FlightNumber, newStatus);
 
                 if (success)
                 {
+                    Console.WriteLine($"✅ Flight status updated successfully via API");
+
                     MessageBox.Show("Flight status updated successfully.", "Success",
                         MessageBoxButtons.OK, MessageBoxIcon.Information);
 
                     selectedFlight.Status = newStatus;
                     UpdateFlightStatusUI(newStatus);
-
-                    // The socket notification will be sent by the server automatically
-                    // No need to manually notify here - it's handled in the API controller
                 }
                 else
                 {
+                    Console.WriteLine($"❌ Failed to update flight status via API");
                     MessageBox.Show("Failed to update flight status.", "Error",
                         MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }
             catch (Exception ex)
             {
+                Console.WriteLine($"❌ Flight status update exception: {ex.Message}");
                 MessageBox.Show($"Error updating flight status: {ex.Message}", "Error",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             finally
             {
                 UseWaitCursor = false;
+                if (btnUpdateStatus != null) btnUpdateStatus.Enabled = true;
             }
         }
 
-        private async void InitializeSignalRConnection()
+        private void ClearPassengerInfo()
         {
-            try
+            if (lblPassengerName != null) lblPassengerName.Text = "";
+            if (lblBookingReference != null) lblBookingReference.Text = "";
+            if (lblSelectedSeat != null)
             {
-                string baseUrl = _apiService.HttpClient.BaseAddress?.ToString() ?? "https://localhost:7215";
+                lblSelectedSeat.Text = "Selected: None";
+                lblSelectedSeat.ForeColor = Color.Black;
+            }
+            if (grpPassengerInfo != null) grpPassengerInfo.Visible = false;
+            _currentBooking = null;
 
-                _hubConnection = new HubConnectionBuilder()
-                    .WithUrl($"{baseUrl}/flighthub")
-                    .WithAutomaticReconnect()
-                    .Build();
+            // Clear seat selection
+            if (!string.IsNullOrEmpty(_selectedSeatId) && _seatButtons.ContainsKey(_selectedSeatId))
+            {
+                var button = _seatButtons[_selectedSeatId];
+                var seat = button.Tag as SeatDto;
+                button.BackColor = seat?.SeatClass == "Business" ? Color.Gold : Color.LightBlue;
+            }
+            _selectedSeatId = "";
+        }
 
-                _hubConnection.On<dynamic>("FlightStatusChanged", async (message) =>
+        // Socket event handlers
+        private async void OnSeatReservedFromSocket(string seatId, string flightNumber)
+        {
+            Console.WriteLine($"📡 Socket: Received seat reserved - {seatId} for flight {flightNumber}");
+
+            if (cboFlights?.SelectedItem is FlightDto selectedFlight &&
+                selectedFlight.FlightNumber == flightNumber)
+            {
+                await InvokeAsync(() =>
                 {
-                    string flightNumber = message.FlightNumber.ToString();
-                    string newStatus = message.NewStatus.ToString();
-
-                    var flight = _flights.FirstOrDefault(f => f.FlightNumber == flightNumber);
-                    if (flight != null)
+                    var seatToRemove = _availableSeats.FirstOrDefault(s => s.SeatId == seatId);
+                    if (seatToRemove != null)
                     {
-                        flight.Status = newStatus;
+                        Console.WriteLine($"🔄 Removing seat {seatId} from available seats");
+                        _availableSeats.Remove(seatToRemove);
 
-                        if (cboFlights.SelectedItem is FlightDto selectedFlight &&
-                            selectedFlight.FlightNumber == flightNumber)
+                        // Update seat button to show as occupied
+                        if (_seatButtons.ContainsKey(seatId))
                         {
-                            this.Invoke((MethodInvoker)delegate
+                            var button = _seatButtons[seatId];
+                            button.BackColor = Color.Gray;
+                            button.ForeColor = Color.White;
+                            button.Enabled = false;
+                            button.Text = button.Text + " (TAKEN)";
+                            _seatButtons.Remove(seatId);
+                            Console.WriteLine($"✅ Updated seat button for {seatId}");
+                        }
+
+                        // Clear selection if this seat was selected
+                        if (_selectedSeatId == seatId)
+                        {
+                            _selectedSeatId = "";
+                            if (lblSelectedSeat != null)
                             {
-                                UpdateFlightStatusUI(newStatus);
-                            });
+                                lblSelectedSeat.Text = "Selected: None - Seat was taken by another passenger";
+                                lblSelectedSeat.ForeColor = Color.Red;
+                            }
+                            if (btnCheckIn != null) btnCheckIn.Enabled = false;
+                            Console.WriteLine($"⚠️ Cleared selection - seat {seatId} was taken");
                         }
                     }
                 });
+            }
+        }
 
-                await _hubConnection.StartAsync();
-            }
-            catch (Exception ex)
+        private async void OnFlightStatusChangedFromSocket(string flightNumber, string newStatus)
+        {
+            Console.WriteLine($"📡 Socket: Received flight status change - {flightNumber} -> {newStatus}");
+
+            await InvokeAsync(() =>
             {
-                Console.WriteLine($"Error connecting to SignalR hub: {ex.Message}");
+                var flight = _flights.FirstOrDefault(f => f.FlightNumber == flightNumber);
+                if (flight != null)
+                {
+                    Console.WriteLine($"🔄 Updating flight status: {flight.Status} -> {newStatus}");
+                    flight.Status = newStatus;
+
+                    if (cboFlights?.SelectedItem is FlightDto selectedFlight &&
+                        selectedFlight.FlightNumber == flightNumber)
+                    {
+                        UpdateFlightStatusUI(newStatus);
+                        Console.WriteLine($"✅ Updated UI for flight {flightNumber}");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"⚠️ Flight {flightNumber} not found in local list");
+                }
+            });
+        }
+
+        private async void OnSeatLockedFromSocket(string seatId, bool isLocked)
+        {
+            Console.WriteLine($"📡 Socket: Received seat lock - {seatId} = {isLocked}");
+
+            await InvokeAsync(() =>
+            {
+                if (_seatButtons.ContainsKey(seatId))
+                {
+                    var button = _seatButtons[seatId];
+                    if (isLocked)
+                    {
+                        button.BackColor = Color.Orange;
+                        button.Text = button.Text.Replace(" (PROCESSING)", "") + " (PROCESSING)";
+                        button.Enabled = false;
+                    }
+                    else if (!button.Text.Contains("(TAKEN)"))
+                    {
+                        // Only re-enable if not permanently taken
+                        var seat = button.Tag as SeatDto;
+                        button.BackColor = seat?.SeatClass == "Business" ? Color.Gold : Color.LightBlue;
+                        button.Text = button.Text.Replace(" (PROCESSING)", "");
+                        button.Enabled = true;
+                    }
+                    Console.WriteLine($"✅ Updated seat lock status for {seatId}");
+                }
+            });
+        }
+
+        private async void OnCheckInCompleteFromSocket(string flightNumber, string passengerName, string seatId)
+        {
+            Console.WriteLine($"📡 Socket: Received check-in complete - {passengerName} for flight {flightNumber}");
+
+            await InvokeAsync(() =>
+            {
+                // Show notification
+                MessageBox.Show($"Passenger {passengerName} has checked in for flight {flightNumber}",
+                    "Check-in Notification", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            });
+        }
+
+        private void OnConnectionStatusChanged(string status)
+        {
+            Console.WriteLine($"📡 WebSocket: Connection status changed - {status}");
+
+            this.Invoke(new Action(() =>
+            {
+                if (status.Contains("Connected"))
+                {
+                    UpdateConnectionStatus(status, Color.Green);
+                }
+                else if (status.Contains("Disconnected") || status.Contains("Failed"))
+                {
+                    UpdateConnectionStatus(status, Color.Red);
+                }
+                else
+                {
+                    UpdateConnectionStatus(status, Color.Orange);
+                }
+            }));
+        }
+
+        private async Task InvokeAsync(Action action)
+        {
+            if (InvokeRequired)
+            {
+                Invoke(action);
             }
+            else
+            {
+                action();
+            }
+        }
+
+        private async Task InitializeSignalRConnectionAsync()
+        {
+            // Placeholder for SignalR initialization if needed
+            // This was referenced in the constructor but not implemented
+            await Task.CompletedTask;
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
+            Console.WriteLine("🧹 MainForm closing - cleaning up resources...");
+
             base.OnFormClosing(e);
 
-            if (_hubConnection != null)
+            try
             {
-                _ = _hubConnection.DisposeAsync();
+                if (_webSocketClient != null) // Updated reference
+                {
+                    _webSocketClient.Disconnect();
+                    _webSocketClient.Dispose();
+                    Console.WriteLine("✅ WebSocket client disposed");
+                }
             }
-
-            if (_socketClient != null)
+            catch (Exception ex)
             {
-                _socketClient.Disconnect();
-                _socketClient.Dispose();
+                Console.WriteLine($"⚠️ Error disposing WebSocket client: {ex.Message}");
             }
         }
 
-        /*Debug*/
-
-
-        // Updated Designer-generated code with new controls
         private void InitializeComponent()
         {
             lblStaffName = new Label();
@@ -1001,7 +1139,7 @@ namespace FlightManagementSystem.WinApp.Forms
             btnCheckIn.TabIndex = 4;
             btnCheckIn.Text = "Check In";
             btnCheckIn.UseVisualStyleBackColor = false;
-            btnCheckIn.Click += btnCheckIn_Click;
+            //btnCheckIn.Click += BtnCheckIn_Click;
 
             // 
             // lblBookingReference
@@ -1093,3 +1231,4 @@ namespace FlightManagementSystem.WinApp.Forms
         private ComboBox cboFlightStatus;
     }
 }
+

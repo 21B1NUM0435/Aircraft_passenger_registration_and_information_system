@@ -1,51 +1,66 @@
 ﻿using FlightManagementSystem.Core.Models;
-using System.Net.Sockets;
+using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 
 namespace FlightManagementSystem.WinApp.Services
 {
-    public class SocketClient : IDisposable
+    public class WebSocketClient : IDisposable
     {
-        private TcpClient? _tcpClient;
-        private NetworkStream? _stream;
-        private readonly string _serverAddress;
-        private readonly int _serverPort;
+        private ClientWebSocket? _webSocket;
+        private readonly string _serverUrl;
         private CancellationTokenSource? _cancellationTokenSource;
         private Task? _listenTask;
         private bool _isConnected = false;
+        private readonly SemaphoreSlim _sendSemaphore = new(1, 1);
 
-        // Events for real-time notifications
+        // Enhanced events with better error handling
         public event Action<string, string>? OnSeatReserved; // seatId, flightNumber
         public event Action<string, string>? OnFlightStatusChanged; // flightNumber, newStatus
         public event Action<string>? OnConnectionStatusChanged; // status message
+        public event Action<string, bool>? OnSeatLocked; // seatId, isLocked
+        public event Action<string, string, string>? OnCheckInComplete; // flightNumber, passengerName, seatId
 
-        public SocketClient(string serverAddress, int serverPort)
+        // Connection health monitoring
+        private readonly System.Threading.Timer _heartbeatTimer;
+        private DateTime _lastMessageReceived = DateTime.UtcNow;
+        private readonly TimeSpan _heartbeatInterval = TimeSpan.FromSeconds(30);
+        private readonly TimeSpan _connectionTimeout = TimeSpan.FromSeconds(60);
+
+        public WebSocketClient(string serverAddress, int serverPort)
         {
-            _serverAddress = serverAddress;
-            _serverPort = serverPort;
+            _serverUrl = $"ws://{serverAddress}:{serverPort}";
+
+            // Initialize heartbeat timer
+            _heartbeatTimer = new System.Threading.Timer(CheckConnectionHealth, null, _heartbeatInterval, _heartbeatInterval);
         }
 
         public async Task<bool> ConnectAsync()
         {
             try
             {
-                _tcpClient = new TcpClient();
-                await _tcpClient.ConnectAsync(_serverAddress, _serverPort);
+                Console.WriteLine($"🔌 Connecting to WebSocket server {_serverUrl}");
+                OnConnectionStatusChanged?.Invoke("Connecting...");
 
-                _stream = _tcpClient.GetStream();
+                _webSocket = new ClientWebSocket();
                 _cancellationTokenSource = new CancellationTokenSource();
+
+                await _webSocket.ConnectAsync(new Uri(_serverUrl), _cancellationTokenSource.Token);
 
                 // Start listening for messages
                 _listenTask = Task.Run(async () => await ListenForMessagesAsync(_cancellationTokenSource.Token));
 
                 _isConnected = true;
-                OnConnectionStatusChanged?.Invoke("Connected to server");
+                _lastMessageReceived = DateTime.UtcNow;
+
+                OnConnectionStatusChanged?.Invoke("Connected");
+                Console.WriteLine("✅ WebSocket client connected successfully");
 
                 return true;
             }
             catch (Exception ex)
             {
+                Console.WriteLine($"❌ WebSocket connection failed: {ex.Message}");
                 OnConnectionStatusChanged?.Invoke($"Connection failed: {ex.Message}");
                 return false;
             }
@@ -55,19 +70,27 @@ namespace FlightManagementSystem.WinApp.Services
         {
             try
             {
+                Console.WriteLine("🔌 Disconnecting WebSocket client");
                 _isConnected = false;
+
                 _cancellationTokenSource?.Cancel();
 
-                _stream?.Close();
-                _tcpClient?.Close();
+                if (_webSocket?.State == WebSocketState.Open)
+                {
+                    _ = _webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Client disconnect", CancellationToken.None);
+                }
 
-                OnConnectionStatusChanged?.Invoke("Disconnected from server");
+                OnConnectionStatusChanged?.Invoke("Disconnected");
+                Console.WriteLine("✅ WebSocket client disconnected");
             }
             catch (Exception ex)
             {
+                Console.WriteLine($"❌ WebSocket disconnect error: {ex.Message}");
                 OnConnectionStatusChanged?.Invoke($"Disconnect error: {ex.Message}");
             }
         }
+
+        #region Message Sending Methods
 
         public async Task NotifySeatReservedAsync(string seatId, string flightNumber)
         {
@@ -76,17 +99,18 @@ namespace FlightManagementSystem.WinApp.Services
             var message = new SocketMessage
             {
                 Type = MessageType.SeatAssignment,
-                Data = new SeatReservationMessage
+                Data = new SeatAssignmentMessage
                 {
                     SeatId = seatId,
                     FlightNumber = flightNumber,
-                    IsReserved = true,
-                    Timestamp = DateTime.UtcNow
+                    IsAssigned = true,
+                    PassengerName = "Reserved"
                 },
                 Timestamp = DateTime.UtcNow
             };
 
             await SendMessageAsync(message);
+            Console.WriteLine($"📡 Sent WebSocket seat reservation: {seatId} for flight {flightNumber}");
         }
 
         public async Task NotifyFlightStatusChangedAsync(string flightNumber, string newStatus)
@@ -106,79 +130,135 @@ namespace FlightManagementSystem.WinApp.Services
             };
 
             await SendMessageAsync(message);
+            Console.WriteLine($"📡 Sent WebSocket flight status update: {flightNumber} -> {newStatus}");
         }
+
+        public async Task SendPingAsync()
+        {
+            if (!_isConnected) return;
+
+            var message = new SocketMessage
+            {
+                Type = MessageType.Ping,
+                Data = "Ping",
+                Timestamp = DateTime.UtcNow
+            };
+
+            await SendMessageAsync(message);
+        }
+
+        public async Task SubscribeToFlightAsync(string flightNumber)
+        {
+            if (!_isConnected) return;
+
+            var message = new SocketMessage
+            {
+                Type = MessageType.FlightSubscription,
+                Data = new { flightNumber = flightNumber },
+                Timestamp = DateTime.UtcNow
+            };
+
+            await SendMessageAsync(message);
+            Console.WriteLine($"📡 Subscribed to WebSocket flight updates: {flightNumber}");
+        }
+
+        #endregion
 
         private async Task SendMessageAsync(SocketMessage message)
         {
-            if (_stream == null || !_isConnected) return;
+            if (_webSocket?.State != WebSocketState.Open || !_isConnected) return;
 
+            await _sendSemaphore.WaitAsync();
             try
             {
                 var json = JsonSerializer.Serialize(message);
-                var data = Encoding.UTF8.GetBytes(json);
+                var bytes = Encoding.UTF8.GetBytes(json);
 
-                await _stream.WriteAsync(data, 0, data.Length);
-                await _stream.FlushAsync();
+                await _webSocket.SendAsync(bytes, WebSocketMessageType.Text, true, CancellationToken.None);
+
+                Console.WriteLine($"📤 Sent WebSocket message: {message.Type}");
             }
             catch (Exception ex)
             {
+                Console.WriteLine($"❌ WebSocket send error: {ex.Message}");
                 OnConnectionStatusChanged?.Invoke($"Send error: {ex.Message}");
+            }
+            finally
+            {
+                _sendSemaphore.Release();
             }
         }
 
         private async Task ListenForMessagesAsync(CancellationToken cancellationToken)
         {
             var buffer = new byte[4096];
+            var messageBuffer = new List<byte>();
 
             try
             {
-                while (!cancellationToken.IsCancellationRequested && _isConnected && _stream != null)
+                Console.WriteLine("👂 Started listening for WebSocket messages");
+
+                while (!cancellationToken.IsCancellationRequested &&
+                       _isConnected &&
+                       _webSocket?.State == WebSocketState.Open)
                 {
-                    var bytesRead = await _stream.ReadAsync(buffer, 0, buffer.Length, cancellationToken);
+                    var result = await _webSocket.ReceiveAsync(buffer, cancellationToken);
 
-                    if (bytesRead == 0)
+                    if (result.MessageType == WebSocketMessageType.Text)
                     {
-                        // Server disconnected
+                        // Add received bytes to buffer
+                        messageBuffer.AddRange(buffer.Take(result.Count));
+
+                        // If this is the end of the message, process it
+                        if (result.EndOfMessage)
+                        {
+                            var messageText = Encoding.UTF8.GetString(messageBuffer.ToArray());
+                            messageBuffer.Clear();
+
+                            await ProcessMessageAsync(messageText);
+                            _lastMessageReceived = DateTime.UtcNow;
+                        }
+                    }
+                    else if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        Console.WriteLine("📪 WebSocket server requested close");
                         break;
-                    }
-
-                    var json = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-
-                    try
-                    {
-                        var message = JsonSerializer.Deserialize<SocketMessage>(json);
-                        await ProcessMessageAsync(message);
-                    }
-                    catch (JsonException ex)
-                    {
-                        // Log JSON parsing error but continue listening
-                        OnConnectionStatusChanged?.Invoke($"Message parse error: {ex.Message}");
                     }
                 }
             }
             catch (OperationCanceledException)
             {
-                // Expected when cancellation is requested
+                Console.WriteLine("🛑 WebSocket message listening cancelled");
+            }
+            catch (WebSocketException wsEx)
+            {
+                Console.WriteLine($"📪 WebSocket connection closed: {wsEx.Message}");
+                OnConnectionStatusChanged?.Invoke($"Connection closed: {wsEx.Message}");
             }
             catch (Exception ex)
             {
+                Console.WriteLine($"❌ WebSocket listen error: {ex.Message}");
                 OnConnectionStatusChanged?.Invoke($"Listen error: {ex.Message}");
             }
             finally
             {
                 _isConnected = false;
+                Console.WriteLine("👂 Stopped listening for WebSocket messages");
             }
         }
 
-        private async Task ProcessMessageAsync(SocketMessage? message)
+        private async Task ProcessMessageAsync(string json)
         {
-            if (message == null) return;
-
             await Task.Run(() =>
             {
                 try
                 {
-                    Console.WriteLine($"Processing message type: {message.Type}");
+                    Console.WriteLine($"📨 Processing WebSocket message: {json.Substring(0, Math.Min(100, json.Length))}...");
+
+                    var message = JsonSerializer.Deserialize<SocketMessage>(json);
+                    if (message == null) return;
+
+                    Console.WriteLine($"📋 WebSocket message type: {message.Type}");
 
                     switch (message.Type)
                     {
@@ -194,44 +274,41 @@ namespace FlightManagementSystem.WinApp.Services
                             ProcessSeatLockMessage(message.Data);
                             break;
 
+                        case MessageType.CheckInComplete:
+                            ProcessCheckInCompleteMessage(message.Data);
+                            break;
+
                         case MessageType.Ping:
                             // Respond to ping
-                            var pongMessage = new SocketMessage
-                            {
-                                Type = MessageType.Ping,
-                                Data = "Pong",
-                                Timestamp = DateTime.UtcNow
-                            };
-                            _ = SendMessageAsync(pongMessage);
+                            _ = Task.Run(async () => await SendPingAsync());
+                            break;
+
+                        case MessageType.System:
+                            ProcessSystemMessage(message.Data);
+                            break;
+
+                        default:
+                            Console.WriteLine($"❓ Unknown WebSocket message type: {message.Type}");
                             break;
                     }
                 }
                 catch (Exception ex)
                 {
+                    Console.WriteLine($"❌ WebSocket message processing error: {ex.Message}");
                     OnConnectionStatusChanged?.Invoke($"Message processing error: {ex.Message}");
-                    Console.WriteLine($"Error processing message: {ex}");
                 }
             });
         }
+
+        #region Message Processing Methods
 
         private void ProcessSeatAssignmentMessage(object data)
         {
             try
             {
-                Console.WriteLine($"Processing seat assignment message: {data}");
+                Console.WriteLine($"💺 Processing WebSocket seat assignment: {data}");
 
-                string json;
-                if (data is JsonElement element)
-                {
-                    json = element.GetRawText();
-                }
-                else
-                {
-                    json = JsonSerializer.Serialize(data);
-                }
-
-                Console.WriteLine($"Seat assignment JSON: {json}");
-
+                string json = GetJsonFromData(data);
                 var seatMsg = JsonSerializer.Deserialize<SeatAssignmentMessage>(json, new JsonSerializerOptions
                 {
                     PropertyNameCaseInsensitive = true
@@ -239,13 +316,13 @@ namespace FlightManagementSystem.WinApp.Services
 
                 if (seatMsg != null && seatMsg.IsAssigned)
                 {
-                    Console.WriteLine($"Seat {seatMsg.SeatId} assigned on flight {seatMsg.FlightNumber}");
+                    Console.WriteLine($"✅ WebSocket: Seat {seatMsg.SeatId} assigned on flight {seatMsg.FlightNumber}");
                     OnSeatReserved?.Invoke(seatMsg.SeatId, seatMsg.FlightNumber);
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error processing seat assignment: {ex.Message}");
+                Console.WriteLine($"❌ Error processing WebSocket seat assignment: {ex.Message}");
             }
         }
 
@@ -253,20 +330,9 @@ namespace FlightManagementSystem.WinApp.Services
         {
             try
             {
-                Console.WriteLine($"Processing flight status message: {data}");
+                Console.WriteLine($"✈️ Processing WebSocket flight status: {data}");
 
-                string json;
-                if (data is JsonElement element)
-                {
-                    json = element.GetRawText();
-                }
-                else
-                {
-                    json = JsonSerializer.Serialize(data);
-                }
-
-                Console.WriteLine($"Flight status JSON: {json}");
-
+                string json = GetJsonFromData(data);
                 var flightMsg = JsonSerializer.Deserialize<FlightStatusMessage>(json, new JsonSerializerOptions
                 {
                     PropertyNameCaseInsensitive = true
@@ -274,13 +340,13 @@ namespace FlightManagementSystem.WinApp.Services
 
                 if (flightMsg != null)
                 {
-                    Console.WriteLine($"Flight {flightMsg.FlightNumber} status changed to {flightMsg.NewStatus}");
+                    Console.WriteLine($"✅ WebSocket: Flight {flightMsg.FlightNumber} status changed to {flightMsg.NewStatus}");
                     OnFlightStatusChanged?.Invoke(flightMsg.FlightNumber, flightMsg.NewStatus);
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error processing flight status: {ex.Message}");
+                Console.WriteLine($"❌ Error processing WebSocket flight status: {ex.Message}");
             }
         }
 
@@ -288,16 +354,9 @@ namespace FlightManagementSystem.WinApp.Services
         {
             try
             {
-                string json;
-                if (data is JsonElement element)
-                {
-                    json = element.GetRawText();
-                }
-                else
-                {
-                    json = JsonSerializer.Serialize(data);
-                }
+                Console.WriteLine($"🔒 Processing WebSocket seat lock: {data}");
 
+                string json = GetJsonFromData(data);
                 var lockMsg = JsonSerializer.Deserialize<SeatLockMessage>(json, new JsonSerializerOptions
                 {
                     PropertyNameCaseInsensitive = true
@@ -305,27 +364,126 @@ namespace FlightManagementSystem.WinApp.Services
 
                 if (lockMsg != null)
                 {
-                    Console.WriteLine($"Seat {lockMsg.SeatId} lock status: {lockMsg.IsLocked}");
-                    // Handle seat lock/unlock if needed
+                    Console.WriteLine($"✅ WebSocket: Seat {lockMsg.SeatId} lock status: {lockMsg.IsLocked}");
+                    OnSeatLocked?.Invoke(lockMsg.SeatId, lockMsg.IsLocked);
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error processing seat lock: {ex.Message}");
+                Console.WriteLine($"❌ Error processing WebSocket seat lock: {ex.Message}");
+            }
+        }
+
+        private void ProcessCheckInCompleteMessage(object data)
+        {
+            try
+            {
+                Console.WriteLine($"🎫 Processing WebSocket check-in complete: {data}");
+
+                string json = GetJsonFromData(data);
+                var checkInMsg = JsonSerializer.Deserialize<CheckInCompleteMessage>(json, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                });
+
+                if (checkInMsg != null)
+                {
+                    Console.WriteLine($"✅ WebSocket: Check-in complete: {checkInMsg.PassengerName} on flight {checkInMsg.FlightNumber}");
+                    OnCheckInComplete?.Invoke(checkInMsg.FlightNumber, checkInMsg.PassengerName, "");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Error processing WebSocket check-in complete: {ex.Message}");
+            }
+        }
+
+        private void ProcessSystemMessage(object data)
+        {
+            try
+            {
+                Console.WriteLine($"🔧 WebSocket system message: {data}");
+                // Handle system messages like welcome, confirmations, etc.
+
+                // Check if it's a welcome message
+                if (data is JsonElement element &&
+                    element.TryGetProperty("message", out var messageProp) &&
+                    messageProp.GetString()?.Contains("Connected") == true)
+                {
+                    OnConnectionStatusChanged?.Invoke("Connected & Verified");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Error processing WebSocket system message: {ex.Message}");
+            }
+        }
+
+        #endregion
+
+        private string GetJsonFromData(object data)
+        {
+            if (data is JsonElement element)
+            {
+                return element.GetRawText();
+            }
+            else
+            {
+                return JsonSerializer.Serialize(data);
+            }
+        }
+
+        private void CheckConnectionHealth(object? state)
+        {
+            try
+            {
+                if (!_isConnected) return;
+
+                var timeSinceLastMessage = DateTime.UtcNow - _lastMessageReceived;
+                if (timeSinceLastMessage > _connectionTimeout)
+                {
+                    Console.WriteLine("💔 WebSocket connection timeout - attempting reconnection");
+                    OnConnectionStatusChanged?.Invoke("Connection timeout - reconnecting...");
+
+                    // Attempt reconnection
+                    _ = Task.Run(async () =>
+                    {
+                        Disconnect();
+                        await Task.Delay(2000); // Wait before reconnecting
+                        await ConnectAsync();
+                    });
+                }
+                else if (timeSinceLastMessage > _heartbeatInterval)
+                {
+                    // Send ping to keep connection alive
+                    _ = Task.Run(async () => await SendPingAsync());
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ WebSocket health check error: {ex.Message}");
             }
         }
 
         public void Dispose()
         {
-            Disconnect();
-            _cancellationTokenSource?.Dispose();
-            _stream?.Dispose();
-            _tcpClient?.Dispose();
+            try
+            {
+                _heartbeatTimer?.Dispose();
+                Disconnect();
+                _cancellationTokenSource?.Dispose();
+                _sendSemaphore?.Dispose();
+                _webSocket?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ WebSocket dispose error: {ex.Message}");
+            }
         }
     }
 
+    #region Message Classes
 
-    // Message classes for socket communication
     public class SeatAssignmentMessage
     {
         public string SeatId { get; set; } = string.Empty;
@@ -348,6 +506,14 @@ namespace FlightManagementSystem.WinApp.Services
         public bool IsLocked { get; set; }
         public DateTime Timestamp { get; set; }
     }
+
+    public class CheckInCompleteMessage
+    {
+        public string FlightNumber { get; set; } = string.Empty;
+        public string BookingReference { get; set; } = string.Empty;
+        public string PassengerName { get; set; } = string.Empty;
+    }
+
     public class SocketMessage
     {
         public MessageType Type { get; set; }
@@ -370,6 +536,10 @@ namespace FlightManagementSystem.WinApp.Services
         CheckInComplete,
         Error,
         Ping,
-        SeatLock
+        SeatLock,
+        System,
+        FlightSubscription
     }
+
+    #endregion
 }
