@@ -1,8 +1,10 @@
 ﻿@page "/flights"
 @using FlightSystem.Server.Models.DTOs
 @using Microsoft.AspNetCore.SignalR.Client
+@using System.Text.Json
 @inject HttpClient Http
 @inject IJSRuntime JSRuntime
+@inject NavigationManager Navigation
 @implements IAsyncDisposable
 
 <PageTitle>Flight Information Display</PageTitle>
@@ -24,7 +26,6 @@
                     Last updated: @lastUpdated.ToString("HH:mm:ss")
                 </span>
             </div>
-
             @if (!string.IsNullOrEmpty(lastUpdateMessage))
             {
                 <div class="alert alert-info d-inline-block">
@@ -190,12 +191,12 @@
             .WithAutomaticReconnect()
             .Build();
 
-        hubConnection.On<object>("FlightStatusChanged", async (update) =>
+        hubConnection.On<JsonElement>("FlightStatusChanged", async (update) =>
         {
             try
             {
-                var flightNumber = ((JsonElement)update).GetProperty("FlightNumber").GetString();
-                var newStatus = ((JsonElement)update).GetProperty("NewStatus").GetString();
+                var flightNumber = update.GetProperty("FlightNumber").GetString();
+                var newStatus = update.GetProperty("NewStatus").GetString();
 
                 lastUpdateMessage = $"Flight {flightNumber} status changed to {newStatus}";
                 recentlyUpdatedFlights.Add(flightNumber ?? "");

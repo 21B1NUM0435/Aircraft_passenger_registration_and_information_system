@@ -2,8 +2,10 @@
 @using FlightSystem.Server.Models
 @using FlightSystem.Server.Services
 @using Microsoft.AspNetCore.SignalR.Client
+@using System.Text.Json
 @inject IFlightService FlightService
 @inject IJSRuntime JSRuntime
+@inject NavigationManager Navigation
 @implements IAsyncDisposable
 
 <PageTitle>Flight Management Dashboard</PageTitle>
@@ -143,6 +145,9 @@
                                     {
                                         <tr class="@(IsFlightUpdatedRecently(flight.FlightNumber) ? "table-warning" : "")">
                                             <td>
+                                                <strong>@flight.FlightNumber</strong>
+                                            </td>
+                                            <td>
                                                 <span class="badge bg-primary">@flight.Origin</span>
                                                 <i class="fas fa-arrow-right mx-2"></i>
                                                 <span class="badge bg-success">@flight.Destination</span>
@@ -197,16 +202,32 @@
         animation: pulse 2s infinite;
     }
     @@keyframes pulse {
-        0% { opacity: 1; }
-        50% { opacity: 0.5; }
-        100% { opacity: 1; }
+        0%{
+            opacity: 1;
+        }
+
+        50% {
+            opacity: 0.5;
+        }
+
+        100% {
+            opacity: 1;
+        }
+
     }
+
     .table-warning {
         animation: highlight 3s ease-in-out;
     }
     @@keyframes highlight {
-        0% { background-color: rgba(255, 193, 7, 0.5); }
-        100% { background-color: transparent; }
+        0%{
+            background-color: rgba(255, 193, 7, 0.5);
+        }
+
+        100% {
+            background-color: transparent;
+        }
+
     }
 </style>
 
@@ -248,68 +269,82 @@
 
     private async Task SetupSignalR()
     {
-        hubConnection = new HubConnectionBuilder()
-            .WithUrl("/flighthub")
-            .WithAutomaticReconnect()
-            .Build();
-
-        hubConnection.On<dynamic>("FlightStatusChanged", async (update) =>
-        {
-            var flightNumber = update.GetProperty("FlightNumber").GetString();
-            var newStatus = update.GetProperty("NewStatus").GetString();
-
-            AddActivity(ActivityType.StatusChange, $"Flight {flightNumber} status changed to {newStatus}");
-            recentlyUpdatedFlights.Add(flightNumber);
-
-            await LoadFlights();
-            await InvokeAsync(StateHasChanged);
-
-            // Clear highlight after 5 seconds
-            _ = Task.Delay(5000).ContinueWith(async _ =>
-            {
-                recentlyUpdatedFlights.Remove(flightNumber);
-                await InvokeAsync(StateHasChanged);
-            });
-        });
-
-        hubConnection.On<dynamic>("SeatAssigned", async (update) =>
-        {
-            var flightNumber = update.GetProperty("FlightNumber").GetString();
-            var passengerName = update.GetProperty("PassengerName").GetString();
-            var seatNumber = update.GetProperty("SeatNumber").GetString();
-
-            AddActivity(ActivityType.SeatAssignment, $"Seat {seatNumber} assigned to {passengerName} on flight {flightNumber}");
-            recentlyUpdatedFlights.Add(flightNumber);
-
-            await LoadFlights();
-            await InvokeAsync(StateHasChanged);
-
-            _ = Task.Delay(3000).ContinueWith(async _ =>
-            {
-                recentlyUpdatedFlights.Remove(flightNumber);
-                await InvokeAsync(StateHasChanged);
-            });
-        });
-
-        hubConnection.Closed += async (error) =>
-        {
-            connectionStatus = "Disconnected";
-            await InvokeAsync(StateHasChanged);
-        };
-        hubConnection.Reconnecting += async (error) =>
-        {
-            connectionStatus = "Reconnecting...";
-            await InvokeAsync(StateHasChanged);
-        };
-        hubConnection.Reconnected += async (connectionId) =>
-        {
-            connectionStatus = "Connected";
-            AddActivity(ActivityType.System, "Dashboard reconnected to real-time updates");
-            await InvokeAsync(StateHasChanged);
-        };
-
         try
         {
+            hubConnection = new HubConnectionBuilder()
+                .WithUrl(Navigation.ToAbsoluteUri("/flighthub"))
+                .WithAutomaticReconnect()
+                .Build();
+
+            hubConnection.On<JsonElement>("FlightStatusChanged", async (update) =>
+            {
+                try
+                {
+                    var flightNumber = update.GetProperty("FlightNumber").GetString();
+                    var newStatus = update.GetProperty("NewStatus").GetString();
+
+                    AddActivity(ActivityType.StatusChange, $"Flight {flightNumber} status changed to {newStatus}");
+                    recentlyUpdatedFlights.Add(flightNumber ?? "");
+
+                    await LoadFlights();
+                    await InvokeAsync(StateHasChanged);
+
+                    // Clear highlight after 5 seconds
+                    _ = Task.Delay(5000).ContinueWith(async _ =>
+                    {
+                        recentlyUpdatedFlights.Remove(flightNumber ?? "");
+                        await InvokeAsync(StateHasChanged);
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error handling flight status change: {ex.Message}");
+                }
+            });
+
+            hubConnection.On<JsonElement>("SeatAssigned", async (update) =>
+            {
+                try
+                {
+                    var flightNumber = update.GetProperty("FlightNumber").GetString();
+                    var passengerName = update.GetProperty("PassengerName").GetString();
+                    var seatNumber = update.GetProperty("SeatNumber").GetString();
+
+                    AddActivity(ActivityType.SeatAssignment, $"Seat {seatNumber} assigned to {passengerName} on flight {flightNumber}");
+                    recentlyUpdatedFlights.Add(flightNumber ?? "");
+
+                    await LoadFlights();
+                    await InvokeAsync(StateHasChanged);
+
+                    _ = Task.Delay(3000).ContinueWith(async _ =>
+                    {
+                        recentlyUpdatedFlights.Remove(flightNumber ?? "");
+                        await InvokeAsync(StateHasChanged);
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error handling seat assignment: {ex.Message}");
+                }
+            });
+
+            hubConnection.Closed += async (error) =>
+            {
+                connectionStatus = "Disconnected";
+                await InvokeAsync(StateHasChanged);
+            };
+            hubConnection.Reconnecting += async (error) =>
+            {
+                connectionStatus = "Reconnecting...";
+                await InvokeAsync(StateHasChanged);
+            };
+            hubConnection.Reconnected += async (connectionId) =>
+            {
+                connectionStatus = "Connected";
+                AddActivity(ActivityType.System, "Dashboard reconnected to real-time updates");
+                await InvokeAsync(StateHasChanged);
+            };
+
             await hubConnection.StartAsync();
             connectionStatus = "Connected";
             AddActivity(ActivityType.System, "Dashboard connected to real-time updates");
@@ -318,17 +353,18 @@
         {
             connectionStatus = $"Connection failed: {ex.Message}";
             AddActivity(ActivityType.Error, $"Connection failed: {ex.Message}");
+            Console.WriteLine($"SignalR connection failed: {ex.Message}");
         }
     }
 
     private void AddActivity(ActivityType type, string message)
     {
         activityFeed.Insert(0, new ActivityItem
-        {
-            Type = type,
-            Message = message,
-            Timestamp = DateTime.Now
-        });
+            {
+                Type = type,
+                Message = message,
+                Timestamp = DateTime.Now
+            });
 
         // Keep only last 50 activities
         if (activityFeed.Count > 50)
