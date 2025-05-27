@@ -1,0 +1,15 @@
+[
+  {
+    "Name": "New Profile",
+    "Projects": [
+      {
+        "Path": "FlightManagementSystem.Web\\FlightManagementSystem.Web.csproj",
+        "Action": "Start"
+      },
+      {
+        "Path": "FlightManagementSystem.WinApp\\FlightManagementSystem.WinApp.csproj",
+        "Action": "Start"
+      }
+    ]
+  }
+]

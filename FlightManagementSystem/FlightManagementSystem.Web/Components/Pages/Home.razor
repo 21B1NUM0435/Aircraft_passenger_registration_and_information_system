@@ -1,0 +1,188 @@
+﻿@page "/"
+
+<PageTitle>Flight Information Display</PageTitle>
+
+<div class="flight-board-container">
+    <div class="header-section">
+        <h1>✈️ Flight Information Display</h1>
+        <p>Real-time flight status updates</p>
+        <div class="current-time">@currentTime</div>
+    </div>
+
+    <div class="quick-access">
+        <a href="/flight-display" class="flight-board-btn">
+            <div class="btn-icon">📋</div>
+            <div class="btn-text">View All Flights</div>
+        </a>
+    </div>
+
+    <div class="status-guide">
+        <h3>Flight Status Guide</h3>
+        <div class="status-items">
+            <div class="status-item">
+                <div class="status-dot status-checkingin"></div>
+                <span>Check-in Open</span>
+            </div>
+            <div class="status-item">
+                <div class="status-dot status-boarding"></div>
+                <span>Boarding</span>
+            </div>
+            <div class="status-item">
+                <div class="status-dot status-departed"></div>
+                <span>Departed</span>
+            </div>
+            <div class="status-item">
+                <div class="status-dot status-delayed"></div>
+                <span>Delayed</span>
+            </div>
+            <div class="status-item">
+                <div class="status-dot status-cancelled"></div>
+                <span>Cancelled</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .flight-board-container {
+        min-height: 100vh;
+        background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+        color: white;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        padding: 2rem;
+        text-align: center;
+    }
+
+    .header-section h1 {
+        font-size: 4rem;
+        margin-bottom: 1rem;
+        text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+    }
+
+    .header-section p {
+        font-size: 1.5rem;
+        margin-bottom: 2rem;
+        opacity: 0.9;
+    }
+
+    .current-time {
+        font-size: 1.8rem;
+        font-weight: bold;
+        color: #ffd700;
+        margin-bottom: 3rem;
+        padding: 1rem 2rem;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 25px;
+        backdrop-filter: blur(10px);
+    }
+
+    .flight-board-btn {
+        display: inline-flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 2rem 3rem;
+        background: rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(10px);
+        border-radius: 20px;
+        text-decoration: none;
+        color: white;
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+        margin-bottom: 3rem;
+        box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
+    }
+
+        .flight-board-btn:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.3);
+            color: white;
+        }
+
+    .btn-icon {
+        font-size: 4rem;
+        margin-bottom: 1rem;
+    }
+
+    .btn-text {
+        font-size: 1.5rem;
+        font-weight: bold;
+    }
+
+    .status-guide {
+        background: rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(10px);
+        border-radius: 15px;
+        padding: 2rem;
+        margin-top: 2rem;
+    }
+
+        .status-guide h3 {
+            margin-bottom: 1.5rem;
+            font-size: 1.5rem;
+        }
+
+    .status-items {
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 2rem;
+    }
+
+    .status-item {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 1.1rem;
+    }
+
+    .status-dot {
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        border: 2px solid white;
+    }
+
+    .status-checkingin {
+        background-color: #2ecc71;
+    }
+
+    .status-boarding {
+        background-color: #f39c12;
+    }
+
+    .status-departed {
+        background-color: #3498db;
+    }
+
+    .status-delayed {
+        background-color: #e67e22;
+    }
+
+    .status-cancelled {
+        background-color: #e74c3c;
+    }
+</style>
+
+@code {
+    private string currentTime = DateTime.Now.ToString("HH:mm:ss - dd MMMM yyyy");
+    private Timer? timer;
+
+    protected override void OnInitialized()
+    {
+        // Update time every second
+        timer = new Timer(UpdateTime, null, TimeSpan.Zero, TimeSpan.FromSeconds(1));
+    }
+
+    private void UpdateTime(object? state)
+    {
+        currentTime = DateTime.Now.ToString("HH:mm:ss - dd MMMM yyyy");
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        timer?.Dispose();
+    }
+}

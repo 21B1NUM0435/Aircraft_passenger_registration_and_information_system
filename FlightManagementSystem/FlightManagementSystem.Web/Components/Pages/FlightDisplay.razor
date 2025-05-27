@@ -1,0 +1,302 @@
+﻿@page "/flight-display"
+@inject NavigationManager NavigationManager
+@inject IJSRuntime JSRuntime
+@implements IAsyncDisposable
+@using Microsoft.JSInterop
+@using FlightManagementSystem.Web.Models.Api
+@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.AspNetCore.SignalR.Client
+@using System.Text.Json
+@using System.Text.Json.Serialization
+
+<PageTitle>Flight Information Display</PageTitle>
+
+<div class="flight-display-container">
+    <div class="display-header">
+        <h1>✈️ FLIGHT INFORMATION</h1>
+        <div class="current-time">@DateTime.Now.ToString("HH:mm:ss - dd MMMM yyyy")</div>
+        <div class="connection-status">
+            <span class="@GetConnectionStatusClass()">
+                @connectionStatus
+            </span>
+        </div>
+    </div>
+
+    <div class="flights-board">
+        @if (flights.Count == 0)
+        {
+            <div class="loading-message">
+                <div class="loading-spinner"></div>
+                <p>Loading flight information...</p>
+            </div>
+        }
+        else
+        {
+            <div class="flight-header">
+                <div class="header-cell">FLIGHT</div>
+                <div class="header-cell">ROUTE</div>
+                <div class="header-cell">DEPARTURE</div>
+                <div class="header-cell">ARRIVAL</div>
+                <div class="header-cell">AIRCRAFT</div>
+                <div class="header-cell">STATUS</div>
+            </div>
+            @foreach (var flight in flights)
+            {
+                <div class="flight-row @GetStatusClass(flight.Status)">
+                    <div class="flight-cell flight-number">@flight.FlightNumber</div>
+                    <div class="flight-cell route">
+                        <span class="origin">@flight.Origin</span>
+                        <span class="arrow">→</span>
+                        <span class="destination">@flight.Destination</span>
+                    </div>
+                    <div class="flight-cell time">@flight.DepartureTime.ToString("HH:mm")</div>
+                    <div class="flight-cell time">@flight.ArrivalTime.ToString("HH:mm")</div>
+                    <div class="flight-cell aircraft">@flight.AircraftModel</div>
+                    <div class="flight-cell status">
+                        <span class="status-badge @GetStatusClass(flight.Status)">
+                            @GetStatusDisplay(flight.Status)
+                        </span>
+                    </div>
+                </div>
+            }
+        }
+    </div>
+</div>
+
+<style>
+    .connection-status {
+        margin-top: 10px;
+        padding: 5px 15px;
+        border-radius: 15px;
+        font-size: 0.9rem;
+        font-weight: bold;
+    }
+
+    .status-connected {
+        background-color: #2ecc71;
+        color: white;
+    }
+
+    .status-disconnected {
+        background-color: #e74c3c;
+        color: white;
+    }
+
+    .status-connecting {
+        background-color: #f39c12;
+        color: white;
+    }
+</style>
+
+@code {
+    private HubConnection? hubConnection;
+    private List<FlightDto> flights = new List<FlightDto>();
+    private System.Threading.Timer? refreshTimer;
+    private string connectionStatus = "Connecting...";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadFlightsAsync();
+        await InitializeSignalRConnection();
+
+        // Refresh time every second
+        refreshTimer = new System.Threading.Timer(async _ =>
+        {
+            await InvokeAsync(StateHasChanged);
+        }, null, TimeSpan.Zero, TimeSpan.FromSeconds(1));
+    }
+
+    private async Task InitializeSignalRConnection()
+    {
+        try
+        {
+            hubConnection = new HubConnectionBuilder()
+                .WithUrl(NavigationManager.ToAbsoluteUri("/flighthub"))
+                .WithAutomaticReconnect()
+                .Build();
+
+            // Handle connection state changes
+            hubConnection.Closed += async (error) =>
+            {
+                connectionStatus = "Disconnected";
+                Console.WriteLine($"SignalR Connection Closed: {error?.Message}");
+                await InvokeAsync(StateHasChanged);
+            };
+
+            hubConnection.Reconnecting += async (error) =>
+            {
+                connectionStatus = "Reconnecting...";
+                Console.WriteLine($"SignalR Reconnecting: {error?.Message}");
+                await InvokeAsync(StateHasChanged);
+            };
+
+            hubConnection.Reconnected += async (connectionId) =>
+            {
+                connectionStatus = "Connected";
+                Console.WriteLine($"SignalR Reconnected: {connectionId}");
+                await InvokeAsync(StateHasChanged);
+            };
+
+            // Register event handlers BEFORE starting connection
+            hubConnection.On<object>("FlightStatusChanged", async (data) =>
+            {
+                try
+                {
+                    Console.WriteLine($"Received FlightStatusChanged via SignalR: {data}");
+
+                    // Parse the data object
+                    var json = JsonSerializer.Serialize(data);
+                    Console.WriteLine($"SignalR data JSON: {json}");
+
+                    var message = JsonSerializer.Deserialize<FlightStatusUpdateMessage>(json, new JsonSerializerOptions
+                        {
+                            PropertyNameCaseInsensitive = true
+                        });
+
+                    if (message != null)
+                    {
+                        var flight = flights.FirstOrDefault(f => f.FlightNumber == message.FlightNumber);
+                        if (flight != null)
+                        {
+                            Console.WriteLine($"Updating flight {message.FlightNumber} from {flight.Status} to {message.NewStatus}");
+                            flight.Status = message.NewStatus;
+                            await InvokeAsync(StateHasChanged);
+                        }
+                        else
+                        {
+                            Console.WriteLine($"Flight {message.FlightNumber} not found in flights list");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error processing FlightStatusChanged: {ex.Message}");
+                }
+            });
+
+            hubConnection.On<object>("SeatAssigned", async (data) =>
+            {
+                try
+                {
+                    Console.WriteLine($"Received SeatAssigned via SignalR: {data}");
+                    // Handle seat assignment if needed for display
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error processing SeatAssigned: {ex.Message}");
+                }
+            });
+
+            hubConnection.On<object>("PassengerCheckedIn", async (data) =>
+            {
+                try
+                {
+                    Console.WriteLine($"Received PassengerCheckedIn via SignalR: {data}");
+                    // Handle passenger check-in if needed for display
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error processing PassengerCheckedIn: {ex.Message}");
+                }
+            });
+
+            // Start the connection
+            Console.WriteLine("Starting SignalR connection...");
+            await hubConnection.StartAsync();
+            connectionStatus = "Connected";
+            Console.WriteLine("SignalR connection established successfully");
+        }
+        catch (Exception ex)
+        {
+            connectionStatus = "Connection Failed";
+            Console.WriteLine($"SignalR connection failed: {ex.Message}");
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadFlightsAsync()
+    {
+        try
+        {
+            using var httpClient = new HttpClient();
+            var response = await httpClient.GetAsync($"{NavigationManager.BaseUri}api/flights");
+            if (response.IsSuccessStatusCode)
+            {
+                var content = await response.Content.ReadAsStringAsync();
+                var newFlights = JsonSerializer.Deserialize<List<FlightDto>>(content, new JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true
+                    }) ?? new List<FlightDto>();
+
+                flights = newFlights;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading flights: {ex.Message}");
+        }
+    }
+
+    private string GetStatusClass(string status)
+    {
+        return status.ToLower() switch
+        {
+            "checkingin" => "status-checkingin",
+            "boarding" => "status-boarding",
+            "departed" => "status-departed",
+            "delayed" => "status-delayed",
+            "cancelled" => "status-cancelled",
+            _ => "status-unknown"
+        };
+    }
+
+    private string GetStatusDisplay(string status)
+    {
+        return status.ToLower() switch
+        {
+            "checkingin" => "CHECK-IN OPEN",
+            "boarding" => "BOARDING",
+            "departed" => "DEPARTED",
+            "delayed" => "DELAYED",
+            "cancelled" => "CANCELLED",
+            _ => status.ToUpper()
+        };
+    }
+
+    private string GetConnectionStatusClass()
+    {
+        return connectionStatus switch
+        {
+            "Connected" => "status-connected",
+            "Disconnected" or "Connection Failed" => "status-disconnected",
+            _ => "status-connecting"
+        };
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (refreshTimer != null)
+        {
+            await refreshTimer.DisposeAsync();
+        }
+
+        if (hubConnection != null)
+        {
+            await hubConnection.DisposeAsync();
+        }
+    }
+
+    private class FlightStatusUpdateMessage
+    {
+        [JsonPropertyName("flightNumber")]
+        public string FlightNumber { get; set; } = string.Empty;
+
+        [JsonPropertyName("newStatus")]
+        public string NewStatus { get; set; } = string.Empty;
+
+        [JsonPropertyName("timestamp")]
+        public DateTime Timestamp { get; set; }
+    }
+}
