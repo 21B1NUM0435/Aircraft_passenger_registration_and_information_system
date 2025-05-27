@@ -8,7 +8,7 @@ namespace FlightSystem.Desktop
         {
             if (disposing)
             {
-                _signalRService?.Dispose();
+                //_signalRService?.Dispose();
                 _httpClient?.Dispose();
                 components?.Dispose();
             }

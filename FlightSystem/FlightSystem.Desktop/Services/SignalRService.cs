@@ -3,30 +3,74 @@ using System.Text.Json;
 
 namespace FlightSystem.Desktop.Services;
 
-public class SignalRService : IDisposable
+public class SignalRService : IAsyncDisposable
 {
     private readonly HubConnection _connection;
+    private readonly CancellationTokenSource _cancellationTokenSource;
+    private readonly System.Threading.Timer _heartbeatTimer;
+    private bool _disposed = false;
 
-    // Events for UI updates
-    public event Action<string>? ConnectionStatusChanged;
-    public event Action<FlightStatusUpdate>? FlightStatusChanged;
-    public event Action<SeatAssignmentUpdate>? SeatAssigned;
+    // Events for UI updates - using weak event pattern to prevent memory leaks
+    private readonly List<WeakReference<Action<string>>> _connectionStatusHandlers = new();
+    private readonly List<WeakReference<Action<FlightStatusUpdate>>> _flightStatusHandlers = new();
+    private readonly List<WeakReference<Action<SeatAssignmentUpdate>>> _seatAssignmentHandlers = new();
+
+    public event Action<string> ConnectionStatusChanged
+    {
+        add => _connectionStatusHandlers.Add(new WeakReference<Action<string>>(value));
+        remove => RemoveHandler(_connectionStatusHandlers, value);
+    }
+
+    public event Action<FlightStatusUpdate> FlightStatusChanged
+    {
+        add => _flightStatusHandlers.Add(new WeakReference<Action<FlightStatusUpdate>>(value));
+        remove => RemoveHandler(_flightStatusHandlers, value);
+    }
+
+    public event Action<SeatAssignmentUpdate> SeatAssigned
+    {
+        add => _seatAssignmentHandlers.Add(new WeakReference<Action<SeatAssignmentUpdate>>(value));
+        remove => RemoveHandler(_seatAssignmentHandlers, value);
+    }
 
     public SignalRService(string serverUrl)
     {
+        _cancellationTokenSource = new CancellationTokenSource();
+
         _connection = new HubConnectionBuilder()
             .WithUrl($"{serverUrl.TrimEnd('/')}/flighthub", options =>
             {
-                // For development - ignore SSL certificate errors
-                options.HttpMessageHandlerFactory = _ => new HttpClientHandler
+                // Only for development - remove in production
+                if (serverUrl.Contains("localhost"))
                 {
-                    ServerCertificateCustomValidationCallback = (sender, cert, chain, sslPolicyErrors) => true
-                };
+                    options.HttpMessageHandlerFactory = _ => new HttpClientHandler
+                    {
+                        ServerCertificateCustomValidationCallback = (sender, cert, chain, sslPolicyErrors) => true
+                    };
+                }
             })
-            .WithAutomaticReconnect() // Auto-reconnect on disconnect
+            .WithAutomaticReconnect(new[] { TimeSpan.Zero, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30) })
             .Build();
 
         SetupEventHandlers();
+
+        // Heartbeat timer to maintain connection and clean up weak references
+        _heartbeatTimer = new System.Threading.Timer(
+            async _ => await PerformHeartbeatAsync(),
+            null,
+            TimeSpan.FromSeconds(30),
+            TimeSpan.FromSeconds(30));
+    }
+
+    private void RemoveHandler<T>(List<WeakReference<T>> handlers, T handler) where T : class
+    {
+        for (int i = handlers.Count - 1; i >= 0; i--)
+        {
+            if (!handlers[i].TryGetTarget(out var target) || ReferenceEquals(target, handler))
+            {
+                handlers.RemoveAt(i);
+            }
+        }
     }
 
     private void SetupEventHandlers()
@@ -45,31 +89,37 @@ public class SignalRService : IDisposable
 
     public async Task<bool> ConnectAsync()
     {
+        if (_disposed)
+            throw new ObjectDisposedException(nameof(SignalRService));
+
         try
         {
             Console.WriteLine("🔌 Connecting to SignalR hub...");
-            ConnectionStatusChanged?.Invoke("Connecting...");
+            InvokeConnectionStatusChanged("Connecting...");
 
-            await _connection.StartAsync();
+            await _connection.StartAsync(_cancellationTokenSource.Token);
 
             Console.WriteLine("✅ Connected to SignalR hub");
-            ConnectionStatusChanged?.Invoke("Connected");
+            InvokeConnectionStatusChanged("Connected");
 
             return true;
         }
         catch (Exception ex)
         {
             Console.WriteLine($"❌ Failed to connect to SignalR hub: {ex.Message}");
-            ConnectionStatusChanged?.Invoke($"Connection failed: {ex.Message}");
+            InvokeConnectionStatusChanged($"Connection failed: {ex.Message}");
             return false;
         }
     }
 
     public async Task DisconnectAsync()
     {
+        if (_disposed || _connection.State == HubConnectionState.Disconnected)
+            return;
+
         try
         {
-            await _connection.StopAsync();
+            await _connection.StopAsync(CancellationToken.None);
             Console.WriteLine("🔌 Disconnected from SignalR hub");
         }
         catch (Exception ex)
@@ -80,9 +130,12 @@ public class SignalRService : IDisposable
 
     public async Task SendPingAsync()
     {
+        if (_disposed || _connection.State != HubConnectionState.Connected)
+            return;
+
         try
         {
-            await _connection.InvokeAsync("Ping");
+            await _connection.InvokeAsync("Ping", _cancellationTokenSource.Token);
         }
         catch (Exception ex)
         {
@@ -92,9 +145,12 @@ public class SignalRService : IDisposable
 
     public async Task JoinFlightGroupAsync(string flightNumber)
     {
+        if (_disposed || _connection.State != HubConnectionState.Connected)
+            return;
+
         try
         {
-            await _connection.InvokeAsync("JoinFlightGroup", flightNumber);
+            await _connection.InvokeAsync("JoinFlightGroup", flightNumber, _cancellationTokenSource.Token);
             Console.WriteLine($"👥 Joined flight group: {flightNumber}");
         }
         catch (Exception ex)
@@ -103,30 +159,79 @@ public class SignalRService : IDisposable
         }
     }
 
+    public async Task LeaveFlightGroupAsync(string flightNumber)
+    {
+        if (_disposed || _connection.State != HubConnectionState.Connected)
+            return;
+
+        try
+        {
+            await _connection.InvokeAsync("LeaveFlightGroup", flightNumber, _cancellationTokenSource.Token);
+            Console.WriteLine($"👋 Left flight group: {flightNumber}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Error leaving flight group {flightNumber}: {ex.Message}");
+        }
+    }
+
     public string GetConnectionState()
     {
         return _connection.State.ToString();
     }
 
+    private async Task PerformHeartbeatAsync()
+    {
+        if (_disposed)
+            return;
+
+        // Clean up dead weak references
+        CleanupWeakReferences();
+
+        // Send heartbeat if connected
+        if (_connection.State == HubConnectionState.Connected)
+        {
+            await SendPingAsync();
+        }
+    }
+
+    private void CleanupWeakReferences()
+    {
+        CleanupWeakReferenceList(_connectionStatusHandlers);
+        CleanupWeakReferenceList(_flightStatusHandlers);
+        CleanupWeakReferenceList(_seatAssignmentHandlers);
+    }
+
+    private void CleanupWeakReferenceList<T>(List<WeakReference<T>> handlers) where T : class
+    {
+        for (int i = handlers.Count - 1; i >= 0; i--)
+        {
+            if (!handlers[i].TryGetTarget(out _))
+            {
+                handlers.RemoveAt(i);
+            }
+        }
+    }
+
     // Event handlers
     private Task OnDisconnected(Exception? exception)
     {
-        Console.WriteLine("📪 SignalR connection lost");
-        ConnectionStatusChanged?.Invoke("Disconnected");
+        Console.WriteLine($"📪 SignalR connection lost: {exception?.Message ?? "Unknown reason"}");
+        InvokeConnectionStatusChanged("Disconnected");
         return Task.CompletedTask;
     }
 
     private Task OnReconnecting(Exception? exception)
     {
         Console.WriteLine("🔄 SignalR reconnecting...");
-        ConnectionStatusChanged?.Invoke("Reconnecting...");
+        InvokeConnectionStatusChanged("Reconnecting...");
         return Task.CompletedTask;
     }
 
     private Task OnReconnected(string? connectionId)
     {
-        Console.WriteLine("✅ SignalR reconnected");
-        ConnectionStatusChanged?.Invoke("Connected");
+        Console.WriteLine($"✅ SignalR reconnected with ID: {connectionId}");
+        InvokeConnectionStatusChanged("Connected");
         return Task.CompletedTask;
     }
 
@@ -139,14 +244,14 @@ public class SignalRService : IDisposable
     private Task OnFlightStatusChanged(FlightStatusUpdate update)
     {
         Console.WriteLine($"✈️ Flight status changed: {update.FlightNumber} → {update.NewStatus}");
-        FlightStatusChanged?.Invoke(update);
+        InvokeFlightStatusChanged(update);
         return Task.CompletedTask;
     }
 
     private Task OnSeatAssigned(SeatAssignmentUpdate update)
     {
         Console.WriteLine($"🪑 Seat assigned: {update.SeatNumber} to {update.PassengerName}");
-        SeatAssigned?.Invoke(update);
+        InvokeSeatAssigned(update);
         return Task.CompletedTask;
     }
 
@@ -156,9 +261,83 @@ public class SignalRService : IDisposable
         return Task.CompletedTask;
     }
 
-    public void Dispose()
+    // Invoke methods with weak reference handling
+    private void InvokeConnectionStatusChanged(string status)
     {
-        _connection?.DisposeAsync();
+        InvokeWeakHandlers(_connectionStatusHandlers, handler => handler(status));
+    }
+
+    private void InvokeFlightStatusChanged(FlightStatusUpdate update)
+    {
+        InvokeWeakHandlers(_flightStatusHandlers, handler => handler(update));
+    }
+
+    private void InvokeSeatAssigned(SeatAssignmentUpdate update)
+    {
+        InvokeWeakHandlers(_seatAssignmentHandlers, handler => handler(update));
+    }
+
+    private void InvokeWeakHandlers<T>(List<WeakReference<T>> handlers, Action<T> invoke) where T : class
+    {
+        for (int i = handlers.Count - 1; i >= 0; i--)
+        {
+            if (handlers[i].TryGetTarget(out var handler))
+            {
+                try
+                {
+                    invoke(handler);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error invoking event handler: {ex.Message}");
+                    // Remove problematic handler
+                    handlers.RemoveAt(i);
+                }
+            }
+            else
+            {
+                // Remove dead reference
+                handlers.RemoveAt(i);
+            }
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed)
+            return;
+
+        _disposed = true;
+
+        try
+        {
+            // Cancel all operations
+            _cancellationTokenSource.Cancel();
+
+            // Dispose timer
+            _heartbeatTimer?.Dispose();
+
+            // Disconnect and dispose connection
+            if (_connection.State != HubConnectionState.Disconnected)
+            {
+                await _connection.StopAsync();
+            }
+            await _connection.DisposeAsync();
+
+            // Clear event handlers
+            _connectionStatusHandlers.Clear();
+            _flightStatusHandlers.Clear();
+            _seatAssignmentHandlers.Clear();
+
+            // Dispose cancellation token source
+            _cancellationTokenSource.Dispose();
+
+            Console.WriteLine("🧹 SignalR service disposed successfully");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error disposing SignalR service: {ex.Message}");
+        }
     }
 }
 
