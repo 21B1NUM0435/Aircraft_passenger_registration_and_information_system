@@ -8,6 +8,7 @@ public partial class MainForm : Form
 {
     private readonly SignalRService _signalRService;
     private readonly HttpClient _httpClient;
+    private readonly ILogger<MainForm>? _logger;
     private readonly string _serverUrl = Environment.GetEnvironmentVariable("FLIGHT_SERVER_URL") ?? "http://localhost:5000";
 
     // Form controls
@@ -338,6 +339,9 @@ public partial class MainForm : Form
         {
             try
             {
+                btnCheckIn.Enabled = false; // Prevent double-clicking
+                btnCheckIn.Text = "Processing...";
+
                 var request = new
                 {
                     BookingReference = _currentBooking.BookingReference,
@@ -353,27 +357,68 @@ public partial class MainForm : Form
                 if (response.IsSuccessStatusCode)
                 {
                     var result = await response.Content.ReadAsStringAsync();
-                    MessageBox.Show("Check-in successful!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    LogMessage($"Check-in successful for {_currentBooking.PassengerName}");
+                    MessageBox.Show("✅ Check-in successful!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    LogMessage($"✅ Check-in successful for {_currentBooking.PassengerName}");
 
                     // Clear current booking and refresh
                     _currentBooking = null;
                     _selectedSeatId = null;
                     pnlPassengerInfo.Visible = false;
-                    btnCheckIn.Enabled = false;
                     txtPassportNumber.Clear();
                     await RefreshAvailableSeats();
                 }
                 else
                 {
-                    var error = await response.Content.ReadAsStringAsync();
-                    MessageBox.Show($"Check-in failed: {error}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    LogMessage($"Check-in failed: {error}");
+                    var errorContent = await response.Content.ReadAsStringAsync();
+
+                    // Parse error response for better user feedback
+                    string errorMessage = "Check-in failed";
+                    string userFriendlyMessage = "";
+
+                    try
+                    {
+                        var errorResponse = JsonSerializer.Deserialize<JsonElement>(errorContent);
+                        if (errorResponse.TryGetProperty("message", out var message))
+                        {
+                            errorMessage = message.GetString() ?? "Unknown error";
+                        }
+
+                        // Provide user-friendly messages based on status code
+                        userFriendlyMessage = response.StatusCode switch
+                        {
+                            System.Net.HttpStatusCode.Conflict =>
+                                "🚫 This seat has already been assigned to another passenger.\n\nPlease select a different seat.",
+                            System.Net.HttpStatusCode.NotFound =>
+                                "❓ The selected seat or booking could not be found.\n\nPlease refresh and try again.",
+                            System.Net.HttpStatusCode.BadRequest =>
+                                "⚠️ " + errorMessage,
+                            _ =>
+                                $"❌ Check-in failed: {errorMessage}"
+                        };
+                    }
+                    catch
+                    {
+                        userFriendlyMessage = $"❌ Check-in failed with status: {response.StatusCode}";
+                    }
+
+                    MessageBox.Show(userFriendlyMessage, "Check-in Failed",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    LogMessage($"❌ Check-in failed: {errorMessage}");
+
+                    // Refresh seats to show current availability
+                    await RefreshAvailableSeats();
                 }
             }
             catch (Exception ex)
             {
-                LogMessage($"Error during check-in: {ex.Message}");
+                MessageBox.Show($"❌ Error during check-in: {ex.Message}", "Error",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                LogMessage($"💥 Error during check-in: {ex.Message}");
+            }
+            finally
+            {
+                btnCheckIn.Enabled = _currentBooking != null && !string.IsNullOrEmpty(_selectedSeatId);
+                btnCheckIn.Text = "Check In";
             }
         }
     }
@@ -385,6 +430,8 @@ public partial class MainForm : Form
             var response = await _httpClient.GetAsync($"{_serverUrl}/api/flights");
             if (response.IsSuccessStatusCode)
             {
+                response.EnsureSuccessStatusCode();
+
                 var json = await response.Content.ReadAsStringAsync();
                 _flights = JsonSerializer.Deserialize<List<Flight>>(json, new JsonSerializerOptions
                 {
@@ -402,6 +449,11 @@ public partial class MainForm : Form
                     cmbFlights.SelectedIndex = 0;
                 }
             }
+        }
+        catch (HttpRequestException ex)
+        {
+            LogMessage($"Network error loading flights: {ex.Message}");
+            MessageBox.Show("Unable to connect to server. Please check your connection.", "Connection Error");
         }
         catch (Exception ex)
         {

@@ -15,7 +15,7 @@ public class SignalRService : IDisposable
     public SignalRService(string serverUrl)
     {
         _connection = new HubConnectionBuilder()
-            .WithUrl($"{serverUrl}/flighthub", options =>
+            .WithUrl($"{serverUrl.TrimEnd('/')}/flighthub", options =>
             {
                 // For development - ignore SSL certificate errors
                 options.HttpMessageHandlerFactory = _ => new HttpClientHandler

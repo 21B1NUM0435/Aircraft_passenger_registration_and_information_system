@@ -5,18 +5,15 @@ using FlightSystem.Server.Hubs;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add Flight Service
-builder.Services.AddScoped<FlightSystem.Server.Services.IFlightService, FlightSystem.Server.Services.FlightService>();
-
 // Add Concurrency Service for race condition handling
-builder.Services.AddSingleton<FlightSystem.Server.Services.IConcurrencyService, FlightSystem.Server.Services.ConcurrencyService>();
+builder.Services.AddScoped<FlightSystem.Server.Services.IConcurrencyService, FlightSystem.Server.Services.ConcurrencyService>();
 
 
 // Force HTTP only on port 5555 to avoid port conflicts
-builder.WebHost.UseUrls("http://localhost:5555");
+builder.WebHost.UseUrls("http://localhost:5000");
 
 Console.WriteLine("🚀 Starting Flight Management System Server");
-Console.WriteLine("🌐 Server will run on: http://localhost:5555");
+Console.WriteLine("🌐 Server will run on: http://localhost:5000");
 
 // Add services to the container
 builder.Services.AddControllers();
@@ -53,6 +50,8 @@ builder.Services.AddServerSideBlazor();
 
 // Add Flight Service
 builder.Services.AddScoped<FlightSystem.Server.Services.IFlightService, FlightSystem.Server.Services.FlightService>();
+
+builder.Services.AddHttpClient();
 
 var app = builder.Build();
 

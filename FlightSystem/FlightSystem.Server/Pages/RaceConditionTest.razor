@@ -310,7 +310,6 @@
 
     protected override async Task OnInitializedAsync()
     {
-        HttpClient.BaseAddress = new Uri("http://localhost:5000");
         await LoadFlights();
     }
 
