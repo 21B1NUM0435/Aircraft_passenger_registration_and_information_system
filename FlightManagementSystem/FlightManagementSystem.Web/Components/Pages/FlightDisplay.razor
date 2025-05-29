@@ -5,6 +5,7 @@
 @using Microsoft.JSInterop
 @using FlightManagementSystem.Web.Models.Api
 @using Microsoft.AspNetCore.Components.Web
+@using Microsoft.AspNetCore.SignalR.Client
 @using System.Text.Json
 @using System.Text.Json.Serialization
 
@@ -18,7 +19,6 @@
             <span class="@GetConnectionStatusClass()">
                 @connectionStatus
             </span>
-            <button class="test-button" @onclick="SendTestMessage">Test WebSocket</button>
         </div>
     </div>
 
@@ -61,17 +61,6 @@
             }
         }
     </div>
-
-    <!-- Debug Panel -->
-    <div class="debug-panel">
-        <h3>🔧 Debug Information</h3>
-        <p><strong>WebSocket State:</strong> @webSocketState</p>
-        <p><strong>Last Update:</strong> @lastUpdateTime.ToString("HH:mm:ss")</p>
-        <p><strong>Messages Received:</strong> @messagesReceived</p>
-        <p><strong>Connection Attempts:</strong> @connectionAttempts</p>
-        <button class="debug-button" @onclick="RefreshFlights">Refresh Flights</button>
-        <button class="debug-button" @onclick="ReconnectWebSocket">Reconnect WebSocket</button>
-    </div>
 </div>
 
 <style>
@@ -81,9 +70,6 @@
         border-radius: 15px;
         font-size: 0.9rem;
         font-weight: bold;
-        display: flex;
-        align-items: center;
-        gap: 10px;
     }
 
     .status-connected {
@@ -100,344 +86,141 @@
         background-color: #f39c12;
         color: white;
     }
-
-    .test-button, .debug-button {
-        background: rgba(255, 255, 255, 0.2);
-        border: 1px solid rgba(255, 255, 255, 0.5);
-        color: white;
-        padding: 5px 10px;
-        border-radius: 5px;
-        cursor: pointer;
-        font-size: 0.8rem;
-    }
-
-        .test-button:hover, .debug-button:hover {
-            background: rgba(255, 255, 255, 0.3);
-        }
-
-    .debug-panel {
-        position: fixed;
-        bottom: 20px;
-        right: 20px;
-        background: rgba(0, 0, 0, 0.8);
-        color: white;
-        padding: 15px;
-        border-radius: 10px;
-        font-size: 0.9rem;
-        min-width: 250px;
-    }
-
-        .debug-panel h3 {
-            margin-top: 0;
-            font-size: 1.1rem;
-        }
-
-        .debug-panel p {
-            margin: 5px 0;
-        }
-
-        .debug-panel button {
-            margin: 5px 5px 0 0;
-        }
 </style>
 
 @code {
+    private HubConnection? hubConnection;
     private List<FlightDto> flights = new List<FlightDto>();
     private System.Threading.Timer? refreshTimer;
-    private string connectionStatus = "Initializing...";
-    private string webSocketState = "None";
-    private DateTime lastUpdateTime = DateTime.UtcNow;
-    private int messagesReceived = 0;
-    private int connectionAttempts = 0;
-
-    // WebSocket variables
-    private DotNetObjectReference<FlightDisplay>? dotNetRef;
-    private IJSObjectReference? webSocketModule;
+    private string connectionStatus = "Connecting...";
 
     protected override async Task OnInitializedAsync()
     {
-        Console.WriteLine("🚀 FlightDisplay component initializing with WebSocket...");
-
         await LoadFlightsAsync();
-        await InitializeWebSocketConnection();
+        await InitializeSignalRConnection();
 
         // Refresh time every second
         refreshTimer = new System.Threading.Timer(async _ =>
         {
             await InvokeAsync(StateHasChanged);
         }, null, TimeSpan.Zero, TimeSpan.FromSeconds(1));
-
-        Console.WriteLine("✅ FlightDisplay component initialized with WebSocket");
     }
 
-    protected override async Task OnAfterRenderAsync(bool firstRender)
+    private async Task InitializeSignalRConnection()
     {
-        if (firstRender)
-        {
-            dotNetRef = DotNetObjectReference.Create(this);
-            await InitializeWebSocketConnection();
-        }
-    }
-
-    private async Task InitializeWebSocketConnection()
-    {
-        connectionAttempts++;
-
         try
         {
-            Console.WriteLine("🔌 Initializing WebSocket connection...");
-            connectionStatus = "Connecting...";
-            webSocketState = "Connecting";
+            hubConnection = new HubConnectionBuilder()
+                .WithUrl(NavigationManager.ToAbsoluteUri("/flighthub"))
+                .WithAutomaticReconnect()
+                .Build();
 
-            // Create WebSocket connection using JavaScript
-            webSocketModule = await JSRuntime.InvokeAsync<IJSObjectReference>("import", "./js/websocket-client.js");
+            // Handle connection state changes
+            hubConnection.Closed += async (error) =>
+            {
+                connectionStatus = "Disconnected";
+                Console.WriteLine($"SignalR Connection Closed: {error?.Message}");
+                await InvokeAsync(StateHasChanged);
+            };
 
-            // Connect to WebSocket server
-            var connected = await webSocketModule.InvokeAsync<bool>("connectWebSocket", dotNetRef, "ws://localhost:8080");
+            hubConnection.Reconnecting += async (error) =>
+            {
+                connectionStatus = "Reconnecting...";
+                Console.WriteLine($"SignalR Reconnecting: {error?.Message}");
+                await InvokeAsync(StateHasChanged);
+            };
 
-            if (connected)
+            hubConnection.Reconnected += async (connectionId) =>
             {
                 connectionStatus = "Connected";
-                webSocketState = "Open";
-                Console.WriteLine("✅ WebSocket connection established");
+                Console.WriteLine($"SignalR Reconnected: {connectionId}");
+                await InvokeAsync(StateHasChanged);
+            };
 
-                // Subscribe to all flights for updates
-                foreach (var flight in flights)
-                {
-                    await SubscribeToFlight(flight.FlightNumber);
-                }
-
-                // Send a test message to verify the connection
-                await SendTestMessage();
-            }
-            else
+            // Register event handlers BEFORE starting connection
+            hubConnection.On<object>("FlightStatusChanged", async (data) =>
             {
-                connectionStatus = "Connection Failed";
-                webSocketState = "Closed";
-                Console.WriteLine("❌ WebSocket connection failed");
-            }
+                try
+                {
+                    Console.WriteLine($"Received FlightStatusChanged via SignalR: {data}");
+
+                    // Parse the data object
+                    var json = JsonSerializer.Serialize(data);
+                    Console.WriteLine($"SignalR data JSON: {json}");
+
+                    var message = JsonSerializer.Deserialize<FlightStatusUpdateMessage>(json, new JsonSerializerOptions
+                        {
+                            PropertyNameCaseInsensitive = true
+                        });
+
+                    if (message != null)
+                    {
+                        var flight = flights.FirstOrDefault(f => f.FlightNumber == message.FlightNumber);
+                        if (flight != null)
+                        {
+                            Console.WriteLine($"Updating flight {message.FlightNumber} from {flight.Status} to {message.NewStatus}");
+                            flight.Status = message.NewStatus;
+                            await InvokeAsync(StateHasChanged);
+                        }
+                        else
+                        {
+                            Console.WriteLine($"Flight {message.FlightNumber} not found in flights list");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error processing FlightStatusChanged: {ex.Message}");
+                }
+            });
+
+            hubConnection.On<object>("SeatAssigned", async (data) =>
+            {
+                try
+                {
+                    Console.WriteLine($"Received SeatAssigned via SignalR: {data}");
+                    // Handle seat assignment if needed for display
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error processing SeatAssigned: {ex.Message}");
+                }
+            });
+
+            hubConnection.On<object>("PassengerCheckedIn", async (data) =>
+            {
+                try
+                {
+                    Console.WriteLine($"Received PassengerCheckedIn via SignalR: {data}");
+                    // Handle passenger check-in if needed for display
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error processing PassengerCheckedIn: {ex.Message}");
+                }
+            });
+
+            // Start the connection
+            Console.WriteLine("Starting SignalR connection...");
+            await hubConnection.StartAsync();
+            connectionStatus = "Connected";
+            Console.WriteLine("SignalR connection established successfully");
         }
         catch (Exception ex)
         {
             connectionStatus = "Connection Failed";
-            webSocketState = "Error";
-            Console.WriteLine($"❌ WebSocket connection error: {ex.Message}");
+            Console.WriteLine($"SignalR connection failed: {ex.Message}");
         }
 
         await InvokeAsync(StateHasChanged);
-    }
-
-    [JSInvokable]
-    public async Task OnWebSocketMessage(string messageJson)
-    {
-        try
-        {
-            messagesReceived++;
-            lastUpdateTime = DateTime.UtcNow;
-
-            Console.WriteLine($"📡 Received WebSocket message: {messageJson}");
-
-            var message = JsonSerializer.Deserialize<WebSocketMessage>(messageJson, new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true
-                });
-
-            if (message != null)
-            {
-                await ProcessWebSocketMessage(message);
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"❌ Error processing WebSocket message: {ex.Message}");
-        }
-    }
-
-    [JSInvokable]
-    public async Task OnWebSocketStatusChange(string status)
-    {
-        Console.WriteLine($"📡 WebSocket status changed: {status}");
-
-        connectionStatus = status;
-        webSocketState = status;
-
-        if (status == "Connected")
-        {
-            // Re-subscribe to flights when reconnected
-            foreach (var flight in flights)
-            {
-                await SubscribeToFlight(flight.FlightNumber);
-            }
-        }
-
-        await InvokeAsync(StateHasChanged);
-    }
-
-    private async Task ProcessWebSocketMessage(WebSocketMessage message)
-    {
-        switch (message.Type?.ToLower())
-        {
-            case "flightstatusupdate":
-                await ProcessFlightStatusUpdate(message.Data);
-                break;
-
-            case "seatassignment":
-                await ProcessSeatAssignment(message.Data);
-                break;
-
-            case "passengercheckdin":
-                await ProcessPassengerCheckIn(message.Data);
-                break;
-
-            case "system":
-                await ProcessSystemMessage(message.Data);
-                break;
-
-            default:
-                Console.WriteLine($"❓ Unknown WebSocket message type: {message.Type}");
-                break;
-        }
-    }
-
-    private async Task ProcessFlightStatusUpdate(object? data)
-    {
-        try
-        {
-            if (data == null) return;
-
-            var json = JsonSerializer.Serialize(data);
-            var flightUpdate = JsonSerializer.Deserialize<FlightStatusUpdateMessage>(json, new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true
-                });
-
-            if (flightUpdate != null)
-            {
-                var flight = flights.FirstOrDefault(f => f.FlightNumber == flightUpdate.FlightNumber);
-                if (flight != null)
-                {
-                    Console.WriteLine($"🔄 Updating flight {flightUpdate.FlightNumber}: {flight.Status} -> {flightUpdate.NewStatus}");
-                    flight.Status = flightUpdate.NewStatus;
-                    await InvokeAsync(StateHasChanged);
-                    Console.WriteLine($"✅ Flight status updated in Web UI via WebSocket");
-                }
-                else
-                {
-                    Console.WriteLine($"⚠️ Flight {flightUpdate.FlightNumber} not found in flights list");
-                    // Refresh flights list to get the latest data
-                    await LoadFlightsAsync();
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"❌ Error processing flight status update: {ex.Message}");
-        }
-    }
-
-    private async Task ProcessSeatAssignment(object? data)
-    {
-        try
-        {
-            Console.WriteLine($"📡 Received seat assignment via WebSocket: {data}");
-            // Handle seat assignment updates if needed for the display
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"❌ Error processing seat assignment: {ex.Message}");
-        }
-    }
-
-    private async Task ProcessPassengerCheckIn(object? data)
-    {
-        try
-        {
-            Console.WriteLine($"📡 Received passenger check-in via WebSocket: {data}");
-            // Handle passenger check-in updates if needed
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"❌ Error processing passenger check-in: {ex.Message}");
-        }
-    }
-
-    private async Task ProcessSystemMessage(object? data)
-    {
-        try
-        {
-            Console.WriteLine($"🔧 Received system message via WebSocket: {data}");
-
-            if (data != null)
-            {
-                var json = JsonSerializer.Serialize(data);
-                if (json.Contains("Connected to Flight Management WebSocket Server"))
-                {
-                    connectionStatus = "Connected & Working";
-                    await InvokeAsync(StateHasChanged);
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"❌ Error processing system message: {ex.Message}");
-        }
-    }
-
-    private async Task SendTestMessage()
-    {
-        try
-        {
-            if (webSocketModule != null)
-            {
-                var testMessage = new
-                {
-                    type = "Ping",
-                    data = "Test from web interface",
-                    timestamp = DateTime.UtcNow
-                };
-
-                await webSocketModule.InvokeVoidAsync("sendMessage", JsonSerializer.Serialize(testMessage));
-                Console.WriteLine("🧪 Test message sent via WebSocket");
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"❌ Error sending test message: {ex.Message}");
-        }
-    }
-
-    private async Task SubscribeToFlight(string flightNumber)
-    {
-        try
-        {
-            if (webSocketModule != null)
-            {
-                var subscribeMessage = new
-                {
-                    type = "FlightSubscription",
-                    data = new { flightNumber = flightNumber },
-                    timestamp = DateTime.UtcNow
-                };
-
-                await webSocketModule.InvokeVoidAsync("sendMessage", JsonSerializer.Serialize(subscribeMessage));
-                Console.WriteLine($"📡 Subscribed to WebSocket updates for flight {flightNumber}");
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"❌ Error subscribing to flight {flightNumber}: {ex.Message}");
-        }
     }
 
     private async Task LoadFlightsAsync()
     {
         try
         {
-            Console.WriteLine("📥 Loading flights from API...");
-
             using var httpClient = new HttpClient();
             var response = await httpClient.GetAsync($"{NavigationManager.BaseUri}api/flights");
-
             if (response.IsSuccessStatusCode)
             {
                 var content = await response.Content.ReadAsStringAsync();
@@ -447,32 +230,13 @@
                     }) ?? new List<FlightDto>();
 
                 flights = newFlights;
-                lastUpdateTime = DateTime.UtcNow;
-
-                Console.WriteLine($"✅ Loaded {flights.Count} flights from API");
                 await InvokeAsync(StateHasChanged);
-            }
-            else
-            {
-                Console.WriteLine($"❌ Failed to load flights: {response.StatusCode}");
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"❌ Error loading flights: {ex.Message}");
+            Console.WriteLine($"Error loading flights: {ex.Message}");
         }
-    }
-
-    private async Task RefreshFlights()
-    {
-        Console.WriteLine("🔄 Manual refresh requested");
-        await LoadFlightsAsync();
-    }
-
-    private async Task ReconnectWebSocket()
-    {
-        Console.WriteLine("🔄 Manual WebSocket reconnection requested");
-        await InitializeWebSocketConnection();
     }
 
     private string GetStatusClass(string status)
@@ -505,7 +269,7 @@
     {
         return connectionStatus switch
         {
-            "Connected" or "Connected & Working" => "status-connected",
+            "Connected" => "status-connected",
             "Disconnected" or "Connection Failed" => "status-disconnected",
             _ => "status-connecting"
         };
@@ -513,37 +277,15 @@
 
     public async ValueTask DisposeAsync()
     {
-        Console.WriteLine("🧹 Disposing FlightDisplay component...");
-
         if (refreshTimer != null)
         {
             await refreshTimer.DisposeAsync();
         }
 
-        if (webSocketModule != null)
+        if (hubConnection != null)
         {
-            try
-            {
-                await webSocketModule.InvokeVoidAsync("disconnect");
-                await webSocketModule.DisposeAsync();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"❌ Error disposing WebSocket: {ex.Message}");
-            }
+            await hubConnection.DisposeAsync();
         }
-
-        dotNetRef?.Dispose();
-
-        Console.WriteLine("✅ FlightDisplay component disposed");
-    }
-
-    // Message classes
-    private class WebSocketMessage
-    {
-        public string? Type { get; set; }
-        public object? Data { get; set; }
-        public DateTime Timestamp { get; set; }
     }
 
     private class FlightStatusUpdateMessage

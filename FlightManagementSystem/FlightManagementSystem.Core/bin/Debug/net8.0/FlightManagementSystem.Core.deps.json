@@ -1,0 +1,91 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v8.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v8.0": {
+      "FlightManagementSystem.Core/1.0.0": {
+        "dependencies": {
+          "Microsoft.EntityFrameworkCore.Abstractions": "8.0.13",
+          "Microsoft.Extensions.Logging.Abstractions": "9.0.5"
+        },
+        "runtime": {
+          "FlightManagementSystem.Core.dll": {}
+        }
+      },
+      "Microsoft.EntityFrameworkCore.Abstractions/8.0.13": {
+        "runtime": {
+          "lib/net8.0/Microsoft.EntityFrameworkCore.Abstractions.dll": {
+            "assemblyVersion": "8.0.13.0",
+            "fileVersion": "8.0.1325.6604"
+          }
+        }
+      },
+      "Microsoft.Extensions.DependencyInjection.Abstractions/9.0.5": {
+        "runtime": {
+          "lib/net8.0/Microsoft.Extensions.DependencyInjection.Abstractions.dll": {
+            "assemblyVersion": "9.0.0.0",
+            "fileVersion": "9.0.525.21509"
+          }
+        }
+      },
+      "Microsoft.Extensions.Logging.Abstractions/9.0.5": {
+        "dependencies": {
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "9.0.5",
+          "System.Diagnostics.DiagnosticSource": "9.0.5"
+        },
+        "runtime": {
+          "lib/net8.0/Microsoft.Extensions.Logging.Abstractions.dll": {
+            "assemblyVersion": "9.0.0.0",
+            "fileVersion": "9.0.525.21509"
+          }
+        }
+      },
+      "System.Diagnostics.DiagnosticSource/9.0.5": {
+        "runtime": {
+          "lib/net8.0/System.Diagnostics.DiagnosticSource.dll": {
+            "assemblyVersion": "9.0.0.0",
+            "fileVersion": "9.0.525.21509"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "FlightManagementSystem.Core/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "Microsoft.EntityFrameworkCore.Abstractions/8.0.13": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-a6O+v8CMStumpVoQyN0aUpx5P3/qYZP+5791sGrzJhIM+QsniQdSaJVdUSneL40M+FpBgtiC8ggqzNo2x/gVlw==",
+      "path": "microsoft.entityframeworkcore.abstractions/8.0.13",
+      "hashPath": "microsoft.entityframeworkcore.abstractions.8.0.13.nupkg.sha512"
+    },
+    "Microsoft.Extensions.DependencyInjection.Abstractions/9.0.5": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-cjnRtsEAzU73aN6W7vkWy8Phj5t3Xm78HSqgrbh/O4Q9SK/yN73wZVa21QQY6amSLQRQ/M8N+koGnY6PuvKQsw==",
+      "path": "microsoft.extensions.dependencyinjection.abstractions/9.0.5",
+      "hashPath": "microsoft.extensions.dependencyinjection.abstractions.9.0.5.nupkg.sha512"
+    },
+    "Microsoft.Extensions.Logging.Abstractions/9.0.5": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-pP1PADCrIxMYJXxFmTVbAgEU7GVpjK5i0/tyfU9DiE0oXQy3JWQaOVgCkrCiePLgS8b5sghM3Fau3EeHiVWbCg==",
+      "path": "microsoft.extensions.logging.abstractions/9.0.5",
+      "hashPath": "microsoft.extensions.logging.abstractions.9.0.5.nupkg.sha512"
+    },
+    "System.Diagnostics.DiagnosticSource/9.0.5": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-WoI5or8kY2VxFdDmsaRZ5yaYvvb+4MCyy66eXo79Cy1uMa7qXeGIlYmZx7R9Zy5S4xZjmqvkk2V8L6/vDwAAEA==",
+      "path": "system.diagnostics.diagnosticsource/9.0.5",
+      "hashPath": "system.diagnostics.diagnosticsource.9.0.5.nupkg.sha512"
+    }
+  }
+}

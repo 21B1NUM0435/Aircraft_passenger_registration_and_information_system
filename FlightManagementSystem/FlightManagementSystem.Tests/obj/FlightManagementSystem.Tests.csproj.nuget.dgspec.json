@@ -1,0 +1,382 @@
+{
+  "format": 1,
+  "restore": {
+    "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Tests\\FlightManagementSystem.Tests.csproj": {}
+  },
+  "projects": {
+    "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Core\\FlightManagementSystem.Core.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Core\\FlightManagementSystem.Core.csproj",
+        "projectName": "FlightManagementSystem.Core",
+        "projectPath": "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Core\\FlightManagementSystem.Core.csproj",
+        "packagesPath": "C:\\Users\\sanja\\.nuget\\packages\\",
+        "outputPath": "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Core\\obj\\",
+        "projectStyle": "PackageReference",
+        "fallbackFolders": [
+          "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
+        ],
+        "configFilePaths": [
+          "C:\\Users\\sanja\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0"
+        ],
+        "sources": {
+          "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0": {
+            "targetAlias": "net8.0",
+            "projectReferences": {}
+          }
+        },
+        "warningProperties": {
+          "noWarn": [
+            "NU1903"
+          ],
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        },
+        "SdkAnalysisLevel": "9.0.200"
+      },
+      "frameworks": {
+        "net8.0": {
+          "targetAlias": "net8.0",
+          "dependencies": {
+            "Microsoft.EntityFrameworkCore.Abstractions": {
+              "target": "Package",
+              "version": "[8.0.13, )"
+            },
+            "Microsoft.Extensions.Logging.Abstractions": {
+              "target": "Package",
+              "version": "[9.0.5, )"
+            }
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.200/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    },
+    "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Infrastructure\\FlightManagementSystem.Infrastructure.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Infrastructure\\FlightManagementSystem.Infrastructure.csproj",
+        "projectName": "FlightManagementSystem.Infrastructure",
+        "projectPath": "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Infrastructure\\FlightManagementSystem.Infrastructure.csproj",
+        "packagesPath": "C:\\Users\\sanja\\.nuget\\packages\\",
+        "outputPath": "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Infrastructure\\obj\\",
+        "projectStyle": "PackageReference",
+        "fallbackFolders": [
+          "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
+        ],
+        "configFilePaths": [
+          "C:\\Users\\sanja\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0"
+        ],
+        "sources": {
+          "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0": {
+            "targetAlias": "net8.0",
+            "projectReferences": {
+              "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Core\\FlightManagementSystem.Core.csproj": {
+                "projectPath": "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Core\\FlightManagementSystem.Core.csproj"
+              }
+            }
+          }
+        },
+        "warningProperties": {
+          "noWarn": [
+            "NU1903"
+          ],
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        },
+        "SdkAnalysisLevel": "9.0.200"
+      },
+      "frameworks": {
+        "net8.0": {
+          "targetAlias": "net8.0",
+          "dependencies": {
+            "Microsoft.EntityFrameworkCore": {
+              "target": "Package",
+              "version": "[8.0.13, )"
+            },
+            "Microsoft.EntityFrameworkCore.Sqlite": {
+              "target": "Package",
+              "version": "[8.0.13, )"
+            },
+            "Microsoft.Extensions.Configuration.Abstractions": {
+              "target": "Package",
+              "version": "[9.0.5, )"
+            },
+            "Microsoft.Extensions.DependencyInjection.Abstractions": {
+              "target": "Package",
+              "version": "[9.0.5, )"
+            },
+            "Microsoft.Extensions.Logging.Abstractions": {
+              "target": "Package",
+              "version": "[9.0.5, )"
+            }
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.200/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    },
+    "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Tests\\FlightManagementSystem.Tests.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Tests\\FlightManagementSystem.Tests.csproj",
+        "projectName": "FlightManagementSystem.Tests",
+        "projectPath": "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Tests\\FlightManagementSystem.Tests.csproj",
+        "packagesPath": "C:\\Users\\sanja\\.nuget\\packages\\",
+        "outputPath": "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Tests\\obj\\",
+        "projectStyle": "PackageReference",
+        "fallbackFolders": [
+          "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
+        ],
+        "configFilePaths": [
+          "C:\\Users\\sanja\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0"
+        ],
+        "sources": {
+          "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0": {
+            "targetAlias": "net8.0",
+            "projectReferences": {
+              "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Core\\FlightManagementSystem.Core.csproj": {
+                "projectPath": "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Core\\FlightManagementSystem.Core.csproj"
+              },
+              "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Infrastructure\\FlightManagementSystem.Infrastructure.csproj": {
+                "projectPath": "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Infrastructure\\FlightManagementSystem.Infrastructure.csproj"
+              },
+              "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Web\\FlightManagementSystem.Web.csproj": {
+                "projectPath": "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Web\\FlightManagementSystem.Web.csproj"
+              }
+            }
+          }
+        },
+        "warningProperties": {
+          "noWarn": [
+            "NU1903"
+          ],
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        },
+        "SdkAnalysisLevel": "9.0.200"
+      },
+      "frameworks": {
+        "net8.0": {
+          "targetAlias": "net8.0",
+          "dependencies": {
+            "Microsoft.NET.Test.Sdk": {
+              "target": "Package",
+              "version": "[17.8.0, )"
+            },
+            "coverlet.collector": {
+              "target": "Package",
+              "version": "[6.0.0, )"
+            },
+            "xunit": {
+              "target": "Package",
+              "version": "[2.5.3, )"
+            },
+            "xunit.runner.visualstudio": {
+              "target": "Package",
+              "version": "[2.5.3, )"
+            }
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.200/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    },
+    "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Web\\FlightManagementSystem.Web.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Web\\FlightManagementSystem.Web.csproj",
+        "projectName": "FlightManagementSystem.Web",
+        "projectPath": "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Web\\FlightManagementSystem.Web.csproj",
+        "packagesPath": "C:\\Users\\sanja\\.nuget\\packages\\",
+        "outputPath": "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Web\\obj\\",
+        "projectStyle": "PackageReference",
+        "fallbackFolders": [
+          "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
+        ],
+        "configFilePaths": [
+          "C:\\Users\\sanja\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0"
+        ],
+        "sources": {
+          "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0": {
+            "targetAlias": "net8.0",
+            "projectReferences": {
+              "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Core\\FlightManagementSystem.Core.csproj": {
+                "projectPath": "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Core\\FlightManagementSystem.Core.csproj"
+              },
+              "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Infrastructure\\FlightManagementSystem.Infrastructure.csproj": {
+                "projectPath": "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Infrastructure\\FlightManagementSystem.Infrastructure.csproj"
+              }
+            }
+          }
+        },
+        "warningProperties": {
+          "noWarn": [
+            "NU1903"
+          ],
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        },
+        "SdkAnalysisLevel": "9.0.200"
+      },
+      "frameworks": {
+        "net8.0": {
+          "targetAlias": "net8.0",
+          "dependencies": {
+            "Microsoft.AspNetCore.Components.Web": {
+              "target": "Package",
+              "version": "[8.0.2, )"
+            },
+            "Microsoft.AspNetCore.SignalR.Client": {
+              "target": "Package",
+              "version": "[8.0.13, )"
+            },
+            "Microsoft.EntityFrameworkCore.Design": {
+              "include": "Runtime, Build, Native, ContentFiles, Analyzers, BuildTransitive",
+              "suppressParent": "All",
+              "target": "Package",
+              "version": "[8.0.13, )"
+            },
+            "Microsoft.JSInterop": {
+              "target": "Package",
+              "version": "[8.0.2, )"
+            },
+            "Swashbuckle.AspNetCore": {
+              "target": "Package",
+              "version": "[6.5.0, )"
+            },
+            "System.Text.Json": {
+              "target": "Package",
+              "version": "[8.0.5, )"
+            }
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "frameworkReferences": {
+            "Microsoft.AspNetCore.App": {
+              "privateAssets": "none"
+            },
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.200/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    }
+  }
+}

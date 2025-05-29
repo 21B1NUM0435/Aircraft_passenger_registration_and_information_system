@@ -1,0 +1,451 @@
+﻿@page "/test-race-conditions"
+@using FlightSystem.Server.Services
+@using System.Text.Json
+@inject IFlightService FlightService
+@inject HttpClient HttpClient
+@inject IJSRuntime JSRuntime
+
+<PageTitle>Race Condition Testing</PageTitle>
+
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-12">
+            <h1 class="display-5 text-center text-white mb-3">
+                <i class="fas fa-bug me-3"></i>Race Condition Testing Suite
+            </h1>
+            <div class="alert alert-info">
+                <i class="fas fa-info-circle me-2"></i>
+                This tool simulates multiple concurrent users trying to assign the same seat to test race condition handling.
+            </div>
+        </div>
+    </div>
+
+    <!-- Test Configuration -->
+    <div class="row mb-4">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0"><i class="fas fa-cog me-2"></i>Test Configuration</h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label class="form-label">Select Flight:</label>
+                        <select class="form-select" @bind="selectedFlightNumber">
+                            <option value="">Select a flight...</option>
+                            @if (flights != null)
+                            {
+                                @foreach (var flight in flights)
+                                {
+                                    <option value="@flight.FlightNumber">
+                                        @flight.FlightNumber - @flight.Origin to @flight.Destination
+                                    </option>
+                                }
+                            }
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Select Seat to Test:</label>
+                        <select class="form-select" @bind="selectedSeatId" disabled="@(availableSeats?.Count == 0)">
+                            <option value="">Select a seat...</option>
+                            @if (availableSeats != null)
+                            {
+                                @foreach (var seat in availableSeats.Take(10)) // Limit to first 10 for demo
+                                {
+                                    <option value="@seat.SeatId">
+                                        @seat.SeatNumber (@seat.Class.ToString())
+                                    </option>
+                                }
+                            }
+                        </select>
+                        @if (availableSeats?.Count == 0)
+                        {
+                            <small class="text-muted">No available seats in selected flight</small>
+                        }
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Number of Concurrent Clients:</label>
+                        <input type="number" class="form-control" @bind="clientCount" min="2" max="20" />
+                        <small class="text-muted">Simulates @clientCount users trying to book the same seat simultaneously</small>
+                    </div>
+
+                    <div class="d-grid gap-2">
+                        <button class="btn btn-warning btn-lg" @onclick="RunRaceConditionTest" disabled="@(isTestRunning || string.IsNullOrEmpty(selectedSeatId))">
+                            @if (isTestRunning)
+                            {
+                                <span class="spinner-border spinner-border-sm me-2"></span>
+                                <text>Running Test...</text>
+                            }
+                            else
+                            {
+                                <i class="fas fa-play me-2"></i>
+                                <text>Start Race Condition Test</text>
+                            }
+                        </button>
+                        <button class="btn btn-secondary" @onclick="ResetTest" disabled="@isTestRunning">
+                            <i class="fas fa-redo me-2"></i>Reset
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0"><i class="fas fa-chart-bar me-2"></i>Test Statistics</h5>
+                </div>
+                <div class="card-body">
+                    @if (lastTestResult != null)
+                    {
+                        <div class="row text-center">
+                            <div class="col-6 mb-3">
+                                <div class="card bg-success text-white">
+                                    <div class="card-body">
+                                        <h3>@lastTestResult.Summary.Successful</h3>
+                                        <small>Successful</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-6 mb-3">
+                                <div class="card bg-warning text-white">
+                                    <div class="card-body">
+                                        <h3>@lastTestResult.Summary.Conflicts</h3>
+                                        <small>Conflicts</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <div class="card bg-danger text-white">
+                                    <div class="card-body">
+                                        <h3>@lastTestResult.Summary.Errors</h3>
+                                        <small>Errors</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <div class="card bg-info text-white">
+                                    <div class="card-body">
+                                        <h3>@lastTestResult.Summary.TotalAttempts</h3>
+                                        <small>Total Attempts</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="alert @(lastTestResult.Summary.RaceConditionHandled ? "alert-success" : "alert-warning") mt-3">
+                            <i class="fas @(lastTestResult.Summary.RaceConditionHandled ? "fa-check-circle" : "fa-exclamation-triangle") me-2"></i>
+                            @if (lastTestResult.Summary.RaceConditionHandled)
+                            {
+                                <text><strong>Race condition detected and handled correctly!</strong> Only 1 client succeeded, others received conflict messages.</text>
+                            }
+                            else
+                            {
+                                <text><strong>No race condition occurred.</strong> Try increasing the number of concurrent clients or test with a more contested seat.</text>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="text-center text-muted">
+                            <i class="fas fa-chart-bar fa-3x mb-3"></i>
+                            <p>Run a test to see statistics</p>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Test Results -->
+    @if (lastTestResult?.TestResults != null)
+    {
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header bg-dark text-white">
+                        <h5 class="mb-0">
+                            <i class="fas fa-list me-2"></i>
+                            Detailed Test Results
+                            <span class="badge bg-light text-dark ms-2">@lastTestResult.TestResults.Count() results</span>
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-striped">
+                                <thead>
+                                    <tr>
+                                        <th>Client ID</th>
+                                        <th>Result</th>
+                                        <th>Message</th>
+                                        <th>Error Type</th>
+                                        <th>Timestamp</th>
+                                        <th>Response Time</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var result in lastTestResult.TestResults.OrderBy(r => r.Timestamp))
+                                    {
+                                        <tr class="@(result.Success ? "table-success" : (result.ErrorType == "Conflict" ? "table-warning" : "table-danger"))">
+                                            <td><strong>Client @result.ClientId</strong></td>
+                                            <td>
+                                                @if (result.Success)
+                                                {
+                                                    <span class="badge bg-success"><i class="fas fa-check"></i> Success</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="badge bg-danger"><i class="fas fa-times"></i> Failed</span>
+                                                }
+                                            </td>
+                                            <td>@result.Message</td>
+                                            <td>
+                                                @if (!string.IsNullOrEmpty(result.ErrorType))
+                                                {
+                                                    <span class="badge @(result.ErrorType == "Conflict" ? "bg-warning" : "bg-danger")">
+                                                        @result.ErrorType
+                                                    </span>
+                                                }
+                                            </td>
+                                            <td><small>@result.Timestamp.ToString("HH:mm:ss.fff")</small></td>
+                                            <td>
+                                                @if (testStartTime.HasValue)
+                                                {
+                                                    var responseTime = result.Timestamp - testStartTime.Value;
+                                                    <small>@responseTime.TotalMilliseconds.ToString("F0")ms</small>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    <!-- Test History -->
+    @if (testHistory.Any())
+    {
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header bg-secondary text-white">
+                        <h5 class="mb-0">
+                            <i class="fas fa-history me-2"></i>
+                            Test History
+                            <button class="btn btn-sm btn-outline-light float-end" @onclick="ClearHistory">
+                                <i class="fas fa-trash"></i> Clear
+                            </button>
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Time</th>
+                                        <th>Seat</th>
+                                        <th>Clients</th>
+                                        <th>Success</th>
+                                        <th>Conflicts</th>
+                                        <th>Race Condition</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var test in testHistory.OrderByDescending(t => t.Timestamp).Take(10))
+                                    {
+                                        <tr>
+                                            <td><small>@test.Timestamp.ToString("HH:mm:ss")</small></td>
+                                            <td>@test.SeatId</td>
+                                            <td>@test.ClientCount</td>
+                                            <td><span class="badge bg-success">@test.SuccessCount</span></td>
+                                            <td><span class="badge bg-warning">@test.ConflictCount</span></td>
+                                            <td>
+                                                @if (test.RaceConditionHandled)
+                                                {
+                                                    <i class="fas fa-check-circle text-success"></i>
+                                                }
+                                                else
+                                                {
+                                                    <i class="fas fa-minus-circle text-muted"></i>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private List<FlightSystem.Server.Models.Flight>? flights;
+    private List<FlightSystem.Server.Models.Seat>? availableSeats;
+    private string selectedSeatId = "";
+    private int clientCount = 5;
+    private bool isTestRunning = false;
+    private TestResult? lastTestResult;
+    private DateTime? testStartTime;
+    private List<TestHistoryItem> testHistory = new();
+    private string _selectedFlightNumber = "";
+    private string selectedFlightNumber
+    {
+        get => _selectedFlightNumber;
+        set
+        {
+            if (_selectedFlightNumber != value)
+            {
+                _selectedFlightNumber = value;
+                _ = OnFlightChanged();
+            }
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadFlights();
+    }
+
+    private async Task LoadFlights()
+    {
+        try
+        {
+            flights = await FlightService.GetAllFlightsAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading flights: {ex.Message}");
+            flights = new List<FlightSystem.Server.Models.Flight>();
+        }
+    }
+
+    private async Task OnFlightChanged()
+    {
+        if (!string.IsNullOrEmpty(selectedFlightNumber))
+        {
+            availableSeats = await FlightService.GetAvailableSeatsAsync(selectedFlightNumber);
+            selectedSeatId = ""; // Reset seat selection
+        }
+        else
+        {
+            availableSeats = null;
+        }
+    }
+
+    private async Task RunRaceConditionTest()
+    {
+        if (string.IsNullOrEmpty(selectedSeatId) || clientCount < 2)
+            return;
+
+        isTestRunning = true;
+        testStartTime = DateTime.UtcNow;
+
+        try
+        {
+            var request = new
+            {
+                SeatId = selectedSeatId,
+                ClientCount = clientCount
+            };
+
+            var json = JsonSerializer.Serialize(request);
+            var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+
+            var response = await HttpClient.PostAsync("/api/checkin/test-race-condition", content);
+
+            if (response.IsSuccessStatusCode)
+            {
+                var resultJson = await response.Content.ReadAsStringAsync();
+                lastTestResult = JsonSerializer.Deserialize<TestResult>(resultJson, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                });
+
+                // Add to history
+                if (lastTestResult != null)
+                {
+                    testHistory.Add(new TestHistoryItem
+                    {
+                        Timestamp = testStartTime.Value,
+                        SeatId = selectedSeatId,
+                        ClientCount = clientCount,
+                        SuccessCount = lastTestResult.Summary.Successful,
+                        ConflictCount = lastTestResult.Summary.Conflicts,
+                        RaceConditionHandled = lastTestResult.Summary.RaceConditionHandled
+                    });
+                }
+            }
+            else
+            {
+                await JSRuntime.InvokeVoidAsync("alert", $"Test failed: {response.StatusCode}");
+            }
+        }
+        catch (Exception ex)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", $"Error running test: {ex.Message}");
+        }
+        finally
+        {
+            isTestRunning = false;
+            // Refresh available seats after test
+            await OnFlightChanged();
+        }
+    }
+
+    private async Task ResetTest()
+    {
+        lastTestResult = null;
+        selectedSeatId = "";
+        selectedFlightNumber = "";
+        availableSeats = null;
+        testStartTime = null;
+        await LoadFlights();
+    }
+
+    private void ClearHistory()
+    {
+        testHistory.Clear();
+    }
+
+    // Data models for the test results
+    public class TestResult
+    {
+        public List<TestClientResult> TestResults { get; set; } = new();
+        public TestSummary Summary { get; set; } = new();
+    }
+
+    public class TestClientResult
+    {
+        public int ClientId { get; set; }
+        public bool Success { get; set; }
+        public string Message { get; set; } = "";
+        public string? ErrorType { get; set; }
+        public DateTime Timestamp { get; set; }
+    }
+
+    public class TestSummary
+    {
+        public int TotalAttempts { get; set; }
+        public int Successful { get; set; }
+        public int Conflicts { get; set; }
+        public int Errors { get; set; }
+        public bool RaceConditionHandled { get; set; }
+    }
+
+    public class TestHistoryItem
+    {
+        public DateTime Timestamp { get; set; }
+        public string SeatId { get; set; } = "";
+        public int ClientCount { get; set; }
+        public int SuccessCount { get; set; }
+        public int ConflictCount { get; set; }
+        public bool RaceConditionHandled { get; set; }
+    }
+}

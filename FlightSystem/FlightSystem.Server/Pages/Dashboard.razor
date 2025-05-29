@@ -1,0 +1,485 @@
+﻿@page "/dashboard"
+@using FlightSystem.Server.Models
+@using FlightSystem.Server.Services
+@using Microsoft.AspNetCore.SignalR.Client
+@using System.Text.Json
+@inject IFlightService FlightService
+@inject IJSRuntime JSRuntime
+@inject NavigationManager Navigation
+@implements IAsyncDisposable
+
+<PageTitle>Flight Management Dashboard</PageTitle>
+
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-12">
+            <h1 class="display-5 text-center text-white mb-3">
+                <i class="fas fa-tachometer-alt me-3"></i>Flight Management Dashboard
+            </h1>
+            <div class="text-center">
+                <span class="badge @GetConnectionStatusClass() fs-6 me-3">
+                    <i class="fas fa-wifi"></i> @connectionStatus
+                </span>
+                <span class="badge bg-light text-dark fs-6">
+                    <i class="fas fa-clock"></i> @lastUpdated.ToString("HH:mm:ss")
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistics Cards -->
+    <div class="row mb-4">
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="card bg-primary text-white h-100">
+                <div class="card-body text-center">
+                    <i class="fas fa-plane fa-3x mb-3"></i>
+                    <h4>@GetTotalFlights()</h4>
+                    <p class="mb-0">Total Flights</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="card bg-success text-white h-100">
+                <div class="card-body text-center">
+                    <i class="fas fa-check-circle fa-3x mb-3"></i>
+                    <h4>@GetCheckedInPassengers()</h4>
+                    <p class="mb-0">Checked In</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="card bg-info text-white h-100">
+                <div class="card-body text-center">
+                    <i class="fas fa-chair fa-3x mb-3"></i>
+                    <h4>@GetAvailableSeats()</h4>
+                    <p class="mb-0">Available Seats</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="card bg-warning text-white h-100">
+                <div class="card-body text-center">
+                    <i class="fas fa-exclamation-triangle fa-3x mb-3"></i>
+                    <h4>@GetDelayedFlights()</h4>
+                    <p class="mb-0">Delayed/Cancelled</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Real-time Activity Feed -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header bg-dark text-white">
+                    <h5 class="mb-0">
+                        <i class="fas fa-rss me-2"></i>Real-time Activity Feed
+                        <span class="badge bg-success ms-2 activity-pulse">LIVE</span>
+                    </h5>
+                </div>
+                <div class="card-body" style="max-height: 300px; overflow-y: auto;">
+                    @if (activityFeed.Any())
+                    {
+                        @foreach (var activity in activityFeed.Take(10))
+                        {
+                            <div class="alert @GetActivityClass(activity.Type) alert-dismissible fade show mb-2">
+                                <i class="@GetActivityIcon(activity.Type) me-2"></i>
+                                <strong>@activity.Timestamp.ToString("HH:mm:ss")</strong> - @activity.Message
+                            </div>
+                        }
+                    }
+                    else
+                    {
+                        <div class="text-muted text-center">
+                            <i class="fas fa-info-circle me-2"></i>
+                            No recent activity
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Flight Status Overview -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">
+                        <i class="fas fa-list me-2"></i>Flight Status Overview
+                    </h5>
+                </div>
+                <div class="card-body">
+                    @if (flights == null)
+                    {
+                        <div class="text-center py-4">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                        </div>
+                    }
+                    else if (!flights.Any())
+                    {
+                        <div class="alert alert-info text-center">
+                            <i class="fas fa-info-circle me-2"></i>
+                            No flights scheduled
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead class="table-dark">
+                                    <tr>
+                                        <th><i class="fas fa-hashtag me-1"></i>Flight</th>
+                                        <th><i class="fas fa-route me-1"></i>Route</th>
+                                        <th><i class="fas fa-clock me-1"></i>Departure</th>
+                                        <th><i class="fas fa-info-circle me-1"></i>Status</th>
+                                        <th><i class="fas fa-users me-1"></i>Passengers</th>
+                                        <th><i class="fas fa-chair me-1"></i>Available Seats</th>
+                                        <th><i class="fas fa-cogs me-1"></i>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var flight in flights.OrderBy(f => f.DepartureTime))
+                                    {
+                                        <tr class="@(IsFlightUpdatedRecently(flight.FlightNumber) ? "table-warning" : "")">
+                                            <td>
+                                                <strong>@flight.FlightNumber</strong>
+                                            </td>
+                                            <td>
+                                                <span class="badge bg-primary">@flight.Origin</span>
+                                                <i class="fas fa-arrow-right mx-2"></i>
+                                                <span class="badge bg-success">@flight.Destination</span>
+                                            </td>
+                                            <td>
+                                                <div>@flight.DepartureTime.ToString("HH:mm")</div>
+                                                <small class="text-muted">@flight.DepartureTime.ToString("MMM dd")</small>
+                                            </td>
+                                            <td>
+                                                <span class="badge @GetStatusClass(flight.Status) fs-6">
+                                                    <i class="@GetStatusIcon(flight.Status) me-1"></i>
+                                                    @GetStatusText(flight.Status)
+                                                </span>
+                                            </td>
+                                            <td>
+                                                <div class="progress" style="height: 20px;">
+                                                    <div class="progress-bar bg-success" role="progressbar"
+                                                         style="width: @(GetPassengerPercentage(flight))%">
+                                                        @GetCheckedInCount(flight)/@GetTotalBookings(flight)
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <span class="badge bg-info fs-6">@GetAvailableSeatsCount(flight)</span>
+                                            </td>
+                                            <td>
+                                                <div class="btn-group btn-group-sm">
+                                                    <button class="btn btn-outline-primary btn-sm"
+                                                            @onclick="() => ViewFlightDetails(flight.FlightNumber)">
+                                                        <i class="fas fa-eye"></i>
+                                                    </button>
+                                                    <button class="btn btn-outline-warning btn-sm"
+                                                            @onclick="() => UpdateFlightStatus(flight.FlightNumber)">
+                                                        <i class="fas fa-edit"></i>
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .activity-pulse {
+        animation: pulse 2s infinite;
+    }
+    @@keyframes pulse {
+        0%{
+            opacity: 1;
+        }
+
+        50% {
+            opacity: 0.5;
+        }
+
+        100% {
+            opacity: 1;
+        }
+
+    }
+
+    .table-warning {
+        animation: highlight 3s ease-in-out;
+    }
+    @@keyframes highlight {
+        0%{
+            background-color: rgba(255, 193, 7, 0.5);
+        }
+
+        100% {
+            background-color: transparent;
+        }
+
+    }
+</style>
+
+@code {
+    private List<Flight>? flights;
+    private HubConnection? hubConnection;
+    private string connectionStatus = "Connecting...";
+    private DateTime lastUpdated = DateTime.Now;
+    private List<ActivityItem> activityFeed = new();
+    private HashSet<string> recentlyUpdatedFlights = new();
+    private System.Threading.Timer? refreshTimer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadFlights();
+        await SetupSignalR();
+
+        // Auto-refresh every 30 seconds
+        refreshTimer = new System.Threading.Timer(async _ =>
+        {
+            await LoadFlights();
+            await InvokeAsync(StateHasChanged);
+        }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+    }
+
+    private async Task LoadFlights()
+    {
+        try
+        {
+            flights = await FlightService.GetAllFlightsAsync();
+            lastUpdated = DateTime.Now;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading flights: {ex.Message}");
+            flights = new List<Flight>();
+        }
+    }
+
+    private async Task SetupSignalR()
+    {
+        try
+        {
+            hubConnection = new HubConnectionBuilder()
+                .WithUrl(Navigation.ToAbsoluteUri("/flighthub"))
+                .WithAutomaticReconnect()
+                .Build();
+
+            hubConnection.On<JsonElement>("FlightStatusChanged", async (update) =>
+            {
+                try
+                {
+                    var flightNumber = update.GetProperty("FlightNumber").GetString();
+                    var newStatus = update.GetProperty("NewStatus").GetString();
+
+                    AddActivity(ActivityType.StatusChange, $"Flight {flightNumber} status changed to {newStatus}");
+                    recentlyUpdatedFlights.Add(flightNumber ?? "");
+
+                    await LoadFlights();
+                    await InvokeAsync(StateHasChanged);
+
+                    // Clear highlight after 5 seconds
+                    _ = Task.Delay(5000).ContinueWith(async _ =>
+                    {
+                        recentlyUpdatedFlights.Remove(flightNumber ?? "");
+                        await InvokeAsync(StateHasChanged);
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error handling flight status change: {ex.Message}");
+                }
+            });
+
+            hubConnection.On<JsonElement>("SeatAssigned", async (update) =>
+            {
+                try
+                {
+                    var flightNumber = update.GetProperty("FlightNumber").GetString();
+                    var passengerName = update.GetProperty("PassengerName").GetString();
+                    var seatNumber = update.GetProperty("SeatNumber").GetString();
+
+                    AddActivity(ActivityType.SeatAssignment, $"Seat {seatNumber} assigned to {passengerName} on flight {flightNumber}");
+                    recentlyUpdatedFlights.Add(flightNumber ?? "");
+
+                    await LoadFlights();
+                    await InvokeAsync(StateHasChanged);
+
+                    _ = Task.Delay(3000).ContinueWith(async _ =>
+                    {
+                        recentlyUpdatedFlights.Remove(flightNumber ?? "");
+                        await InvokeAsync(StateHasChanged);
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error handling seat assignment: {ex.Message}");
+                }
+            });
+
+            hubConnection.Closed += async (error) =>
+            {
+                connectionStatus = "Disconnected";
+                await InvokeAsync(StateHasChanged);
+            };
+            hubConnection.Reconnecting += async (error) =>
+            {
+                connectionStatus = "Reconnecting...";
+                await InvokeAsync(StateHasChanged);
+            };
+            hubConnection.Reconnected += async (connectionId) =>
+            {
+                connectionStatus = "Connected";
+                AddActivity(ActivityType.System, "Dashboard reconnected to real-time updates");
+                await InvokeAsync(StateHasChanged);
+            };
+
+            await hubConnection.StartAsync();
+            connectionStatus = "Connected";
+            AddActivity(ActivityType.System, "Dashboard connected to real-time updates");
+        }
+        catch (Exception ex)
+        {
+            connectionStatus = $"Connection failed: {ex.Message}";
+            AddActivity(ActivityType.Error, $"Connection failed: {ex.Message}");
+            Console.WriteLine($"SignalR connection failed: {ex.Message}");
+        }
+    }
+
+    private void AddActivity(ActivityType type, string message)
+    {
+        activityFeed.Insert(0, new ActivityItem
+            {
+                Type = type,
+                Message = message,
+                Timestamp = DateTime.Now
+            });
+
+        // Keep only last 50 activities
+        if (activityFeed.Count > 50)
+        {
+            activityFeed.RemoveAt(activityFeed.Count - 1);
+        }
+    }
+
+    // Statistics Methods
+    private int GetTotalFlights() => flights?.Count ?? 0;
+    private int GetCheckedInPassengers() =>
+        flights?.SelectMany(f => f.Bookings).Count(b => b.Status == BookingStatus.CheckedIn) ?? 0;
+    private int GetAvailableSeats() =>
+        flights?.SelectMany(f => f.Seats).Count(s => s.IsAvailable) ?? 0;
+    private int GetDelayedFlights() =>
+        flights?.Count(f => f.Status == FlightStatus.Delayed || f.Status == FlightStatus.Cancelled) ?? 0;
+
+    // Flight-specific Methods
+    private int GetAvailableSeatsCount(Flight flight) =>
+        flight.Seats?.Count(s => s.IsAvailable) ?? 0;
+    private int GetCheckedInCount(Flight flight) =>
+        flight.Bookings?.Count(b => b.Status == BookingStatus.CheckedIn) ?? 0;
+    private int GetTotalBookings(Flight flight) =>
+        flight.Bookings?.Count ?? 0;
+    private double GetPassengerPercentage(Flight flight)
+    {
+        var total = GetTotalBookings(flight);
+        if (total == 0) return 0;
+        return (double)GetCheckedInCount(flight) / total * 100;
+    }
+    private bool IsFlightUpdatedRecently(string flightNumber) =>
+        recentlyUpdatedFlights.Contains(flightNumber);
+
+    // UI Helper Methods
+    private string GetConnectionStatusClass() => connectionStatus switch
+    {
+        "Connected" => "bg-success",
+        "Connecting..." or "Reconnecting..." => "bg-warning text-dark",
+        _ => "bg-danger"
+    };
+    private string GetStatusClass(FlightStatus status) => status switch
+    {
+        FlightStatus.CheckingIn => "bg-primary",
+        FlightStatus.Boarding => "bg-warning text-dark",
+        FlightStatus.Departed => "bg-success",
+        FlightStatus.Delayed => "bg-danger",
+        FlightStatus.Cancelled => "bg-dark",
+        _ => "bg-secondary"
+    };
+    private string GetStatusText(FlightStatus status) => status switch
+    {
+        FlightStatus.CheckingIn => "Check-in Open",
+        FlightStatus.Boarding => "Boarding",
+        FlightStatus.Departed => "Departed",
+        FlightStatus.Delayed => "Delayed",
+        FlightStatus.Cancelled => "Cancelled",
+        _ => "Unknown"
+    };
+    private string GetStatusIcon(FlightStatus status) => status switch
+    {
+        FlightStatus.CheckingIn => "fas fa-check-circle",
+        FlightStatus.Boarding => "fas fa-door-open",
+        FlightStatus.Departed => "fas fa-plane-departure",
+        FlightStatus.Delayed => "fas fa-clock",
+        FlightStatus.Cancelled => "fas fa-times-circle",
+        _ => "fas fa-question-circle"
+    };
+    private string GetActivityClass(ActivityType type) => type switch
+    {
+        ActivityType.StatusChange => "alert-primary",
+        ActivityType.SeatAssignment => "alert-success",
+        ActivityType.System => "alert-info",
+        ActivityType.Error => "alert-danger",
+        _ => "alert-secondary"
+    };
+    private string GetActivityIcon(ActivityType type) => type switch
+    {
+        ActivityType.StatusChange => "fas fa-exchange-alt",
+        ActivityType.SeatAssignment => "fas fa-chair",
+        ActivityType.System => "fas fa-cog",
+        ActivityType.Error => "fas fa-exclamation-triangle",
+        _ => "fas fa-info-circle"
+    };
+
+    // Action Methods
+    private async Task ViewFlightDetails(string flightNumber)
+    {
+        await JSRuntime.InvokeVoidAsync("alert", $"Viewing details for flight {flightNumber}");
+    }
+    private async Task UpdateFlightStatus(string flightNumber)
+    {
+        await JSRuntime.InvokeVoidAsync("alert", $"Update status for flight {flightNumber}");
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        refreshTimer?.Dispose();
+        if (hubConnection is not null)
+        {
+            await hubConnection.DisposeAsync();
+        }
+    }
+
+    // Helper Classes
+    public class ActivityItem
+    {
+        public ActivityType Type { get; set; }
+        public string Message { get; set; } = string.Empty;
+        public DateTime Timestamp { get; set; }
+    }
+    public enum ActivityType
+    {
+        StatusChange,
+        SeatAssignment,
+        System,
+        Error
+    }
+}

@@ -2,7 +2,6 @@
 using FlightManagementSystem.Core.Models;
 using FlightManagementSystem.Web.Models.Api;
 using Microsoft.AspNetCore.Mvc;
-using System.Text.Json;
 
 namespace FlightManagementSystem.Web.Controllers.Api
 {
@@ -105,121 +104,70 @@ namespace FlightManagementSystem.Web.Controllers.Api
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         public async Task<IActionResult> UpdateFlightStatus(string flightNumber, [FromBody] UpdateFlightStatusDto updateDto)
         {
-            _logger.LogInformation("🔄 Received flight status update request: {FlightNumber} -> {NewStatus}",
-                flightNumber, updateDto.NewStatus);
-
             if (!Enum.TryParse<FlightStatus>(updateDto.NewStatus, true, out var newStatus))
             {
-                _logger.LogWarning("❌ Invalid flight status: {NewStatus}", updateDto.NewStatus);
                 return BadRequest($"Invalid flight status: {updateDto.NewStatus}");
             }
 
             var flight = await _flightService.GetFlightByNumberAsync(flightNumber);
             if (flight == null)
             {
-                _logger.LogWarning("❌ Flight not found: {FlightNumber}", flightNumber);
                 return NotFound();
             }
 
             var success = await _flightService.UpdateFlightStatusAsync(flightNumber, newStatus);
             if (!success)
             {
-                _logger.LogError("❌ Failed to update flight status in database: {FlightNumber}", flightNumber);
                 return BadRequest("Failed to update flight status");
             }
 
-            _logger.LogInformation("✅ Successfully updated flight status in database: {FlightNumber} -> {Status}",
-                flightNumber, newStatus);
+            // Broadcast to Socket Server (Windows apps)
+            BroadcastToSocketServer(flightNumber, newStatus);
 
-            // CRITICAL: Broadcast to BOTH Socket Server AND SignalR Hub
-            await BroadcastFlightStatusUpdate(flightNumber, newStatus);
-
-            return Ok(new
-            {
-                status = "Flight status updated successfully",
-                flightNumber = flightNumber,
-                newStatus = newStatus.ToString(),
-                timestamp = DateTime.UtcNow
-            });
-        }
-
-        /// <summary>
-        /// Broadcasts flight status update to ALL clients (Windows apps via Socket + Web clients via SignalR)
-        /// </summary>
-        private async Task BroadcastFlightStatusUpdate(string flightNumber, FlightStatus newStatus)
-        {
-            _logger.LogInformation("📡 Broadcasting flight status update: {FlightNumber} -> {Status}", flightNumber, newStatus);
-
-            var broadcastTasks = new List<Task>();
-
-            // 1. Broadcast to Socket Server (Windows applications)
-            broadcastTasks.Add(Task.Run(() => BroadcastToSocketServer(flightNumber, newStatus)));
-
-            // 2. Broadcast to SignalR Hub (Web clients)
+            // Broadcast to SignalR Hub (Web clients)
             if (_flightHubService != null)
             {
-                broadcastTasks.Add(BroadcastToSignalRHub(flightNumber, newStatus));
+                try
+                {
+                    await _flightHubService.NotifyFlightStatusChanged(flightNumber, newStatus);
+                    _logger.LogInformation("Successfully broadcasted flight status change via SignalR for flight {FlightNumber}", flightNumber);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to broadcast via SignalR for flight {FlightNumber}", flightNumber);
+                }
             }
             else
             {
-                _logger.LogWarning("⚠️ FlightHubService is null - SignalR broadcast skipped");
+                _logger.LogWarning("FlightHubService is not available - SignalR broadcast skipped");
             }
 
-            // Wait for all broadcasts to complete
-            try
-            {
-                await Task.WhenAll(broadcastTasks);
-                _logger.LogInformation("✅ All flight status broadcasts completed successfully");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "❌ Error during flight status broadcasting");
-            }
+            _logger.LogInformation("Flight {FlightNumber} status updated to {Status}", flightNumber, newStatus);
+            return Ok(new { status = "Flight status updated successfully" });
         }
 
-        /// <summary>
-        /// Broadcast flight status update to Socket Server (Windows apps)
-        /// </summary>
         private void BroadcastToSocketServer(string flightNumber, FlightStatus newStatus)
         {
             try
             {
-                var socketMessage = new
+                var message = System.Text.Json.JsonSerializer.Serialize(new
                 {
                     type = "FlightStatusUpdate",
                     data = new
                     {
-                        flightNumber = flightNumber,
+                        flightNumber,
                         newStatus = newStatus.ToString(),
                         timestamp = DateTime.UtcNow
                     },
                     timestamp = DateTime.UtcNow
-                };
+                });
 
-                var json = JsonSerializer.Serialize(socketMessage);
-                _socketServer.BroadcastMessage(json);
-
-                _logger.LogInformation("📡 Socket Server broadcast sent: {FlightNumber} -> {Status}", flightNumber, newStatus);
+                _socketServer.BroadcastMessage(message);
+                _logger.LogInformation("Successfully broadcasted flight status change via Socket Server for flight {FlightNumber}", flightNumber);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ Failed to broadcast via Socket Server for flight {FlightNumber}", flightNumber);
-            }
-        }
-
-        /// <summary>
-        /// Broadcast flight status update to SignalR Hub (Web clients)
-        /// </summary>
-        private async Task BroadcastToSignalRHub(string flightNumber, FlightStatus newStatus)
-        {
-            try
-            {
-                await _flightHubService!.NotifyFlightStatusChanged(flightNumber, newStatus);
-                _logger.LogInformation("📡 SignalR Hub broadcast sent: {FlightNumber} -> {Status}", flightNumber, newStatus);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "❌ Failed to broadcast via SignalR for flight {FlightNumber}", flightNumber);
+                _logger.LogError(ex, "Failed to broadcast via Socket Server for flight {FlightNumber}", flightNumber);
             }
         }
     }

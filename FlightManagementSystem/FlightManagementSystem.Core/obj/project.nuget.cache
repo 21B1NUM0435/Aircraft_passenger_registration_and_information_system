@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "dgSpecHash": "vkMHPb5C5hA=",
+  "success": true,
+  "projectFilePath": "C:\\Users\\sanja\\source\\repos\\Aircraft_passenger_registration_and_information_system\\FlightManagementSystem\\FlightManagementSystem.Core\\FlightManagementSystem.Core.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\sanja\\.nuget\\packages\\microsoft.entityframeworkcore.abstractions\\8.0.13\\microsoft.entityframeworkcore.abstractions.8.0.13.nupkg.sha512",
+    "C:\\Users\\sanja\\.nuget\\packages\\microsoft.extensions.dependencyinjection.abstractions\\9.0.5\\microsoft.extensions.dependencyinjection.abstractions.9.0.5.nupkg.sha512",
+    "C:\\Users\\sanja\\.nuget\\packages\\microsoft.extensions.logging.abstractions\\9.0.5\\microsoft.extensions.logging.abstractions.9.0.5.nupkg.sha512",
+    "C:\\Users\\sanja\\.nuget\\packages\\system.diagnostics.diagnosticsource\\9.0.5\\system.diagnostics.diagnosticsource.9.0.5.nupkg.sha512"
+  ],
+  "logs": []
+}

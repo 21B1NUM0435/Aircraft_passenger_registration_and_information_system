@@ -31,7 +31,7 @@ namespace FlightManagementSystem.WinApp.Forms
                 var apiService = new ApiService(apiUrl);
 
                 // Open the main form
-                var mainForm = new MainForm();
+                var mainForm = new MainForm(apiService, staffInfo.StaffId, staffInfo.Name, staffInfo.CounterId);
                 this.Hide();
                 mainForm.FormClosed += (s, args) => this.Close();
                 mainForm.Show();
