@@ -165,7 +165,7 @@ namespace FlightManagementSystem.Infrastructure.Data
                     StaffId = "ST001",
                     Name = "John Smith",
                     Username = "jsmith",
-                    PasswordHash = "hashed_password" // In real app, use proper password hashing
+                    PasswordHash = "hashed_password"
                 };
 
                 var staff2 = new AirlineStaff
@@ -173,7 +173,7 @@ namespace FlightManagementSystem.Infrastructure.Data
                     StaffId = "ST002",
                     Name = "Alice Johnson",
                     Username = "ajohnson",
-                    PasswordHash = "hashed_password" // In real app, use proper password hashing
+                    PasswordHash = "hashed_password"
                 };
 
                 await context.AirlineStaff.AddRangeAsync(staff1, staff2);
